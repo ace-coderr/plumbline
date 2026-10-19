@@ -1,0 +1,39 @@
+{
+  "name": "plumbline",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Verifiable liquidity uptime on Elysium",
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter=!@plumbline/web build && pnpm --filter @plumbline/web build",
+    "typecheck": "pnpm -r typecheck && tsc -p scripts/tsconfig.json",
+    "lint:types": "pnpm -r typecheck",
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test",
+    "abis": "pnpm contracts:build && tsx scripts/gen-abis.ts",
+    "seed": "tsx scripts/seed.ts",
+    "keeper": "pnpm --filter @plumbline/keeper start",
+    "indexer": "pnpm --filter @plumbline/indexer start",
+    "web": "pnpm --filter @plumbline/web dev",
+    "contracts:deploy": "tsx scripts/deploy.ts",
+    "contracts:verify": "tsx scripts/verify.ts",
+    "stack": "tsx scripts/stack.ts",
+    "demo": "tsx scripts/demo.ts",
+    "measure": "tsx scripts/measure.ts",
+    "budget": "tsx scripts/budget.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "viem": "^2.21.55"
+  },
+  "dependencies": {
+    "@plumbline/shared": "workspace:*"
+  }
+}

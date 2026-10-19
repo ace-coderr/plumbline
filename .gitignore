@@ -1,0 +1,25 @@
+node_modules/
+dist/
+dist-server/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+out/
+cache/
+
+# runtime data: indexer SQLite, checkpoints, keeper stats, fork rehearsal.
+# The measured gas ledgers stay tracked: README's Budget section is built from them.
+data/*
+!data/gas-99801-fork.json
+!data/gas-99801-live.json
+*.sqlite
+*.sqlite-*
+*.db
