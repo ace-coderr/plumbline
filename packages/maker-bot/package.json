@@ -1,0 +1,25 @@
+{
+  "name": "@plumbline/maker-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference two-sided quoter for PlumbQuote vaults",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "tsx --test src/pricing.test.ts"
+  },
+  "dependencies": {
+    "@plumbline/shared": "workspace:*",
+    "fastify": "^5.2.0",
+    "viem": "^2.21.55"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
