@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { MarketSummary } from "@plumbline/shared";
-import { useCampaigns, useEconomics, useMarkets } from "../lib/api";
+import { STATIC, useCampaigns, useEconomics, useMarkets } from "../lib/api";
+import { useNow } from "../components/Snapshot";
 import { ago, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, tone, toneText } from "../lib/format";
 import {
   Badge,
@@ -77,7 +78,7 @@ export function MarketsPage() {
   const econ = useEconomics();
   // Most-probed markets first: an unseeded pair should not lead the page.
   const list = [...(markets.data ?? [])].sort((a, b) => b.probes24h - a.probes24h || b.vaultCount - a.vaultCount);
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow();
   const activeCampaigns = (campaigns.data ?? []).filter((c) => now < c.startTime + c.numEpochs * c.epochLength).length;
 
   return (
@@ -101,8 +102,8 @@ export function MarketsPage() {
 
       <StatRow>
         <Stat label="Markets" value={fmtInt(list.length)} />
-        <Stat label="Live vaults" value={fmtInt(list.reduce((a, m) => a + m.liveVaults, 0))} sub={`${fmtInt(list.reduce((a, m) => a + m.vaultCount, 0))} listed`} />
-        <Stat label="Live campaigns" value={fmtInt(activeCampaigns)} />
+        <Stat label={STATIC ? "Quoting at snapshot" : "Live vaults"} value={fmtInt(list.reduce((a, m) => a + m.liveVaults, 0))} sub={`${fmtInt(list.reduce((a, m) => a + m.vaultCount, 0))} listed`} />
+        <Stat label={STATIC ? "Running at snapshot" : "Live campaigns"} value={fmtInt(activeCampaigns)} />
         <Stat label="Probes run" value={fmtInt(econ.data?.totalProbes)} />
         <Stat label="Probes / hour" value={econ.data?.probesPerHour ? fmtInt(econ.data.probesPerHour) : "—"} />
         <Stat label="Quote updates" value={fmtInt(econ.data?.quoteUpdates)} sub={econ.data?.quoteUpdatesPerHour ? `${fmtInt(econ.data.quoteUpdatesPerHour)} / hour` : undefined} />
@@ -123,7 +124,7 @@ export function MarketsPage() {
               <MarketCard key={m.pair} m={m} now={now} />
             ))}
           </div>
-          <Panel title="Pairs" pad={false} right={<span>refreshes every 3s</span>} className="hidden md:block">
+          <Panel title="Pairs" pad={false} right={<span>{STATIC ? "as of the snapshot" : "refreshes every 3s"}</span>} className="hidden md:block">
             <Table>
               <thead>
                 <tr>

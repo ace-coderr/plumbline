@@ -79,7 +79,7 @@ export function EconomicsPage() {
         <Stat
           label="Keeper"
           value={keeper.data ? `${keeper.data.totals.probesPerMinute.toFixed(1)}/m` : "—"}
-          sub={keeper.data ? `${fmtInt(keeper.data.totals.probes)} probes this run` : "stats unreachable"}
+          sub={keeper.data ? `${fmtInt(keeper.data.totals.probes)} probes this run` : "not running"}
         />
       </StatRow>
 

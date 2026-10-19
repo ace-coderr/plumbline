@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@plumbline/indexer':
+        specifier: workspace:*
+        version: link:packages/indexer
       '@plumbline/shared':
         specifier: workspace:*
         version: link:packages/shared

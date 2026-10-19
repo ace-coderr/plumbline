@@ -11,10 +11,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
-import { formatUnits } from "viem";
 import type { DepthReport } from "@plumbline/shared";
 import { startIndexer } from "@plumbline/indexer";
-import { defaultSvg, renderPng, reportSvg, type CardData } from "./og.js";
+import { cardFromReport as card, defaultSvg, renderPng, reportSvg } from "./og.js";
+import { reportCopy, withMeta } from "./meta.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Compiled to dist-server/server/, so the Vite build sits two levels up.
@@ -36,7 +36,6 @@ if (!existsSync(join(dist, "index.html"))) {
   throw new Error("apps/web/dist is missing; run pnpm --filter @plumbline/web build first");
 }
 const template = readFileSync(join(dist, "index.html"), "utf8");
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 function origin(req: FastifyRequest): string {
   if (PUBLIC_URL) return PUBLIC_URL;
@@ -54,40 +53,8 @@ async function fetchReport(token: string): Promise<DepthReport | null> {
   }
 }
 
-function card(r: DepthReport): CardData {
-  const band = r.depth.find((d) => d.bps === 50) ?? r.depth[0];
-  const depth = band ? Number(formatUnits(BigInt(band.bidQuote), r.quote.decimals)) : 0;
-  return {
-    pair: `${r.token.symbol} / ${r.quote.symbol}`,
-    uptime: r.verifiedUptime === null ? "—" : `${(r.verifiedUptime * 100).toFixed(2)}%`,
-    spread: r.medianSpreadBps === null ? "—" : `${r.medianSpreadBps.toFixed(1)} bps`,
-    // Small depths keep significant digits instead of rounding to zero.
-    depth: `${depth >= 1 ? Math.round(depth).toLocaleString("en-US") : depth.toPrecision(2)} ${r.quote.symbol}`,
-    probes: r.probes.toLocaleString("en-US"),
-    makers: String(r.makers),
-    footnote: `Every probe is an Elysium transaction. Campaigns ${r.campaigns.map((c) => `#${c}`).join(" ") || "—"}.`,
-    demo: Boolean(r.quote.demo || r.token.demo),
-  };
-}
-
 function page(meta: { title: string; description: string; image: string; url: string }): string {
-  const tags = `
-    <title>${esc(meta.title)}</title>
-    <meta name="description" content="${esc(meta.description)}" />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Plumbline" />
-    <meta property="og:title" content="${esc(meta.title)}" />
-    <meta property="og:description" content="${esc(meta.description)}" />
-    <meta property="og:url" content="${esc(meta.url)}" />
-    <meta property="og:image" content="${esc(meta.image)}" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${esc(meta.title)}" />
-    <meta name="twitter:description" content="${esc(meta.description)}" />
-    <meta name="twitter:image" content="${esc(meta.image)}" />
-  `;
-  return template.replace(/<!--og:start-->[\s\S]*<!--og:end-->/, tags);
+  return withMeta(template, meta);
 }
 
 const app = Fastify({ logger: false });
@@ -147,8 +114,7 @@ app.get<{ Params: { token: string } }>("/report/:token", async (req, reply) => {
   const base = origin(req);
   const html = r
     ? page({
-        title: `${r.token.symbol} depth report · ${card(r).uptime} verified uptime`,
-        description: `${card(r).uptime} uptime over ${r.probes.toLocaleString("en-US")} on-chain probes, median spread ${card(r).spread}, ${card(r).depth} within ±50 bps. Every probe is an Elysium transaction.`,
+        ...reportCopy(r, token),
         image: `${base}/og/report/${encodeURIComponent(token)}.png`,
         url: `${base}/report/${encodeURIComponent(token)}`,
       })

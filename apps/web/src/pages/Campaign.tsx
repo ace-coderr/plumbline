@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { useAccount, useWriteContract } from "wagmi";
 import { deployment, failLabels, plumbCampaignsAbi } from "@plumbline/shared";
 import { useCampaign } from "../lib/api";
+import { useNow } from "../components/Snapshot";
 import { ago, clock, dateTime, duration, fmtAmt, fmtInt, fmtPct, tone, toneText } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { EpochBars, ProbeStrip } from "../components/charts";
@@ -32,11 +33,12 @@ export function CampaignPage() {
   const { address } = useAccount();
   const { writeContractAsync } = useWriteContract();
   const tx = useTxRunner();
+  // Snapshot time in static mode, so epochs read as they did when the snapshot was taken.
+  const now = useNow();
 
   if (q.isLoading) return <Loading rows={6} />;
   if (q.isError || !q.data) return <ErrorNote error={q.error ?? "unknown campaign"} />;
   const { campaign: c, leaderboard, epochs, recentProbes, penalties } = q.data;
-  const now = Math.floor(Date.now() / 1000);
   const end = c.startTime + c.numEpochs * c.epochLength;
   const settleable = epochs.filter((e) => !e.settled && e.end <= now);
   const reward = (raw: string | null, digits = 4) => (raw === null ? "—" : fmtAmt(raw, c.rewardDecimals, digits));

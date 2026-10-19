@@ -10,7 +10,7 @@ import {
   type MarketSummary,
   type QuoteView,
 } from "@plumbline/shared";
-import { useMarket, useUptime } from "../lib/api";
+import { STATIC, useMarket, useUptime } from "../lib/api";
 import { ago, clock, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, px, tone, toneText } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { ProbeStrip, UptimeChart } from "../components/charts";
@@ -296,7 +296,11 @@ export function MarketPage() {
             </div>
           </Panel>
 
-          <Panel title="Live quote ladder" pad={false} right={<span>inventory read on-chain</span>}>
+          <Panel
+            title={STATIC ? "Quote ladder at snapshot" : "Live quote ladder"}
+            pad={false}
+            right={<span>{STATIC ? "quotes and inventory when the snapshot was taken" : "inventory read on-chain"}</span>}
+          >
             <Ladder book={book} m={m} />
           </Panel>
 

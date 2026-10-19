@@ -224,15 +224,39 @@ pnpm stack
 `pnpm stack --dev` runs from sources with the Vite dev server on :5173. Each service also runs on
 its own: `pnpm --filter @plumbline/keeper start` and so on.
 
-### Public deployment (Railway)
+### Public site: a static snapshot
 
-The public site is one always-on service built from the [`Dockerfile`](Dockerfile)
-([`railway.json`](railway.json) selects it). The web server embeds the indexer
-(`EMBED_INDEXER=true`): it serves the dashboard, the API under `/api`, and the link-preview cards
-from one process, with SQLite on a persistent volume mounted at `/data`. The keeper and maker bots
-stay off: both campaigns are settled. On an empty volume the indexer backfills from the deploy
-block, so the full probe history rebuilds itself on first boot. Depth and spread in reports are
-computed from probe events, so nothing depends on live bots.
+Both campaigns are settled and the keeper and bots are off, so the indexed data no longer changes.
+The public site is a static export of it, hosted with no server, function or database.
+
+```bash
+pnpm export:static                                  # index to the chain head, write the snapshot
+pnpm --filter @plumbline/web build:static           # vite build --mode static + report prerender
+```
+
+* `pnpm export:static` runs the indexer to the chain head, then writes every response the dashboard
+  reads (markets, campaigns, epochs, probes, fills, maker scores, report figures, economics) to
+  `apps/web/public/snapshot/` and stamps `meta.json` with the block height and its UTC time. It also
+  renders the report link-preview PNGs into `apps/web/public/og/report/`. Both are committed.
+* `vite build --mode static` makes the app read those files instead of the REST API (same paths, one
+  shared mapping in `packages/shared/src/snapshot.ts`). The default build and `pnpm stack` still use
+  the live API: this is a second mode, not a replacement.
+* Every page that shows data carries the snapshot's block height (linked to the explorer) and UTC
+  time, and the keeper reads "not running". Every probe, settlement and the slash still links to its
+  transaction on the Elysium explorer, so the snapshot can be checked without us.
+* A static host cannot inject per-request meta tags, so the build writes `report/<TOKEN>.html` with
+  that report's Open Graph tags; [`vercel.json`](vercel.json) serves it at `/report/<TOKEN>` and falls
+  back to the SPA for every other route. Preview images use `PUBLIC_URL` or Vercel's production domain.
+
+To refresh the snapshot after new on-chain activity: rerun `pnpm export:static`, commit, push.
+
+### Running the live indexer (Railway)
+
+The [`Dockerfile`](Dockerfile) and [`railway.json`](railway.json) are for when there is ongoing
+activity to track. They run one always-on service: the web server with the indexer embedded
+(`EMBED_INDEXER=true`), serving the dashboard, the API under `/api`, and link-preview cards from one
+process, with SQLite on a persistent volume mounted at `/data`. On an empty volume the indexer
+backfills from the deploy block, so the full history rebuilds itself on first boot.
 
 ### Indexer API (`:8788`, proxied at `/api` by the web server)
 
@@ -251,7 +275,8 @@ Keeper: `GET :8787/health`, `GET :8787/stats`.
 
 ## 60-second demo
 
-With `pnpm stack` running and the dashboard open at `http://localhost:8080`:
+With `pnpm stack` running and the dashboard open at `http://localhost:8080` (the static site shows
+the same pages from the snapshot; step 3 needs the live stack):
 
 1. **0–10s · Markets** (`/`): WHYPE/PLUMBUSD, tagged *demo asset*, with live uptime, a 12 bps
    spread and two makers quoting; WHYPE/USDC sits registered and unseeded. Quote updates count up.

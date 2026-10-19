@@ -5,6 +5,7 @@ import { useCampaign, useReport, useReportProbes } from "../lib/api";
 import { dateTime, duration, fmtAmt, fmtInt, fmtPct, short, tone, toneText } from "../lib/format";
 import { DailyBars } from "../components/charts";
 import { Wordmark } from "../components/Brand";
+import { SnapshotStamp } from "../components/Snapshot";
 import { Button, DemoTag, ErrorNote, Loading, N, Page, Segmented, Stamp, Table, Td, Th, TxLink, cx } from "../components/ui";
 
 const WINDOWS = ["24h", "7d", "30d"] as const;
@@ -110,6 +111,10 @@ export function ReportPage() {
             </Button>
           </div>
         </header>
+
+        <div className="mt-4">
+          <SnapshotStamp />
+        </div>
 
         {/* The certificate */}
         <article className="mt-6 rounded-card border-2 border-ink bg-paper p-1.5 shadow-brut">

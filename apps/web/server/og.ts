@@ -1,17 +1,9 @@
 import { Resvg } from "@resvg/resvg-js";
+import type { CardData } from "./meta.js";
+export { cardFromReport } from "./meta.js";
+export type { CardData } from "./meta.js";
 import { palette as P } from "../tailwind.config.js";
 
-/** Data shown on a report's link-preview card. */
-export interface CardData {
-  pair: string;
-  uptime: string;
-  spread: string;
-  depth: string;
-  probes: string;
-  makers: string;
-  footnote: string;
-  demo: boolean;
-}
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -89,3 +81,4 @@ export function renderPng(svg: string, width?: number): Buffer {
   });
   return r.render().asPng();
 }
+

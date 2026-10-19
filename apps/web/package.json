@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
     "preview": "vite preview",
     "serve": "node dist-server/server/index.js",
-    "icons": "tsx server/icons.ts"
+    "icons": "tsx server/icons.ts",
+    "build:static": "tsc -p tsconfig.json --noEmit && vite build --mode static && tsx scripts/prerender.ts"
   },
   "dependencies": {
     "@fastify/static": "^8.0.3",

@@ -17,10 +17,17 @@ import { registerApi } from "./api.js";
 export interface IndexerService {
   /** Mount the REST routes on a Fastify instance (use a prefix such as /api when embedding). */
   register(app: FastifyInstance): void;
+  /** Read model behind the API, for exporters that write the same responses to files. */
+  queries: Queries;
+  /** Sync progress: chain head, indexed cursor, receipts still to fetch, last HYPE/USD read. */
+  status(): { head: number; cursor: number; pendingReceipts: number; hypeUsd: number | null };
   /** Stop loops and close the database. */
   close(): void;
   dbPath: string;
 }
+
+export { Queries } from "./queries.js";
+export { fetchHypeUsd } from "./sampler.js";
 
 export async function startIndexer(log: Logger = makeLogger("indexer")): Promise<IndexerService> {
   if (!deployment.deployed) throw new Error("Plumbline is not deployed; run pnpm contracts:deploy first");
@@ -77,6 +84,8 @@ export async function startIndexer(log: Logger = makeLogger("indexer")): Promise
   return {
     dbPath,
     register: (app) => registerApi(app, queries, sync, () => hypeUsd),
+    queries,
+    status: () => ({ head: sync.head, cursor: sync.cursor, pendingReceipts: sync.pendingReceipts(), hypeUsd }),
     close: () => {
       stopped = true;
       db.close();

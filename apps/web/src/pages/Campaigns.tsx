@@ -1,11 +1,12 @@
 import { Link } from "react-router-dom";
 import { useCampaigns } from "../lib/api";
+import { useNow } from "../components/Snapshot";
 import { ago, duration, fmtAmt, fmtInt } from "../lib/format";
 import { Badge, Button, DemoTag, Empty, ErrorNote, Loading, PageHeader, Panel, Table, Td, Th, Page } from "../components/ui";
 
 export function CampaignsPage() {
   const q = useCampaigns();
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow();
   return (
     <Page density="dense">
       <PageHeader

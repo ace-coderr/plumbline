@@ -1,0 +1,12 @@
+{
+  "chainId": 99801,
+  "block": 11831287,
+  "blockTimestamp": 1792449532,
+  "takenAt": "2026-10-19T22:38:56.761Z",
+  "contracts": {
+    "factory": "0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4",
+    "router": "0x6E1937B16a8B23401133350a84cb6062c03848a6",
+    "campaigns": "0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c"
+  },
+  "explorerUrl": "https://elysium.kinetiq.xyz/testnet-explorer"
+}

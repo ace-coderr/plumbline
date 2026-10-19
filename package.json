@@ -24,7 +24,8 @@
     "stack": "tsx scripts/stack.ts",
     "demo": "tsx scripts/demo.ts",
     "measure": "tsx scripts/measure.ts",
-    "budget": "tsx scripts/budget.ts"
+    "budget": "tsx scripts/budget.ts",
+    "export:static": "tsx scripts/export-static.ts"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",
@@ -34,6 +35,7 @@
     "viem": "^2.21.55"
   },
   "dependencies": {
-    "@plumbline/shared": "workspace:*"
+    "@plumbline/shared": "workspace:*",
+    "@plumbline/indexer": "workspace:*"
   }
 }

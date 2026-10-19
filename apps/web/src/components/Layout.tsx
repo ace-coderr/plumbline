@@ -1,7 +1,8 @@
 import { NavLink, Outlet, Link } from "react-router-dom";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { addressUrl, deployment, elysiumTestnet } from "@plumbline/shared";
-import { useHealth, useKeeper } from "../lib/api";
+import { STATIC, useHealth, useKeeper } from "../lib/api";
+import { SnapshotStamp } from "./Snapshot";
 import { fmtInt, short } from "../lib/format";
 import { Wordmark } from "./Brand";
 import { Button, Dot, cx } from "./ui";
@@ -51,12 +52,12 @@ function StatusBar() {
   return (
     <footer className="fixed inset-x-0 bottom-0 z-20 flex h-7 items-center gap-4 overflow-hidden border-t-2 border-ink bg-paper px-4 text-2xs text-ink">
       <span className="num flex shrink-0 items-center gap-1.5">
-        <Dot tone={indexerTone} live={indexerTone === "pass"} />
-        indexer {h ? `#${fmtInt(h.cursor)}` : health.isError ? "offline" : "…"}
+        <Dot tone={STATIC ? "none" : indexerTone} live={!STATIC && indexerTone === "pass"} />
+        {STATIC ? "snapshot" : "indexer"} {h ? `#${fmtInt(h.cursor)}` : health.isError ? "offline" : "…"}
       </span>
       <span className="num flex shrink-0 items-center gap-1.5">
         <Dot tone={k ? "pass" : "none"} live={Boolean(k)} />
-        keeper {k ? `${fmtInt(k.totals.probes)} probes` : "offline"}
+        keeper {k ? `${fmtInt(k.totals.probes)} probes` : "not running"}
       </span>
       <span className="num hidden shrink-0 sm:inline">chain {deployment.chainId}</span>
       <span className="ml-auto hidden gap-4 md:flex">
@@ -101,6 +102,11 @@ export function Layout() {
         </div>
       </header>
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:py-8">
+        {STATIC && (
+          <div className="mb-6">
+            <SnapshotStamp />
+          </div>
+        )}
         <Outlet />
       </main>
       <StatusBar />
