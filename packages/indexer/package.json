@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Plumbline event indexer and REST API",
-  "main": "./dist/index.js",
+  "main": "./dist/service.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -22,5 +22,12 @@
     "@types/node": "^20.17.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "types": "./dist/service.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/service.d.ts",
+      "import": "./dist/service.js"
+    }
   }
 }

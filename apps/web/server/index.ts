@@ -1,7 +1,10 @@
 /**
- * Production server for the dashboard. Serves the built SPA, proxies /api to the indexer and
- * /keeper to the keeper, and gives /report/:token pages real link previews: OG/Twitter meta tags
- * filled from the live report, plus a rendered PNG card at /og/report/:token.png.
+ * Production server for the dashboard. Serves the built SPA and the indexer API under /api, and
+ * gives /report/:token pages real link previews: OG/Twitter meta tags filled from the live report,
+ * plus a rendered PNG card at /og/report/:token.png.
+ *
+ * EMBED_INDEXER=true runs the indexer inside this process (one deployable service: web + API +
+ * sync). Otherwise /api is proxied to INDEXER_URL, which is how local development runs it.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -10,15 +13,24 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { formatUnits } from "viem";
 import type { DepthReport } from "@plumbline/shared";
+import { startIndexer } from "@plumbline/indexer";
 import { defaultSvg, renderPng, reportSvg, type CardData } from "./og.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Compiled to dist-server/server/, so the Vite build sits two levels up.
 const dist = join(here, "..", "..", "dist");
+// Every upstream is configurable; the defaults are for local development.
 const INDEXER = process.env.INDEXER_URL ?? "http://127.0.0.1:8788";
+// "off" (or empty) disables the keeper proxy: the dashboard then reports the keeper as offline.
 const KEEPER = process.env.KEEPER_URL ?? "http://127.0.0.1:8787";
-const PORT = Number(process.env.WEB_PORT ?? 8080);
-const PUBLIC_URL = process.env.PUBLIC_URL?.replace(/\/$/, "");
+const KEEPER_ON = KEEPER !== "" && KEEPER !== "off";
+const EMBED = process.env.EMBED_INDEXER === "true";
+// Railway (and most hosts) assign the port through PORT.
+const PORT = Number(process.env.PORT ?? process.env.WEB_PORT ?? 8080);
+// Public origin for link previews. Falls back to Railway's generated domain, then the request host.
+const PUBLIC_URL = (
+  process.env.PUBLIC_URL ?? (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+).replace(/\/$/, "");
 
 if (!existsSync(join(dist, "index.html"))) {
   throw new Error("apps/web/dist is missing; run pnpm --filter @plumbline/web build first");
@@ -32,10 +44,11 @@ function origin(req: FastifyRequest): string {
   return `${proto}://${req.headers.host ?? `localhost:${PORT}`}`;
 }
 
+/** Report data through this server's own /api route, embedded or proxied alike. */
 async function fetchReport(token: string): Promise<DepthReport | null> {
   try {
-    const res = await fetch(`${INDEXER}/reports/${encodeURIComponent(token)}?window=30d`, { signal: AbortSignal.timeout(4_000) });
-    return res.ok ? ((await res.json()) as DepthReport) : null;
+    const res = await app.inject({ method: "GET", url: `/api/reports/${encodeURIComponent(token)}?window=30d` });
+    return res.statusCode === 200 ? (res.json() as DepthReport) : null;
   } catch {
     return null;
   }
@@ -92,8 +105,26 @@ async function proxy(base: string, prefix: string, req: FastifyRequest, reply: F
     return reply.code(502).send({ error: "upstream unavailable" });
   }
 }
-app.get("/api/*", (req, reply) => proxy(INDEXER, "/api", req, reply));
-app.get("/keeper/*", (req, reply) => proxy(KEEPER, "/keeper", req, reply));
+if (EMBED) {
+  const indexer = await startIndexer();
+  await app.register(
+    async (api) => {
+      indexer.register(api);
+    },
+    { prefix: "/api" },
+  );
+  const close = () => {
+    indexer.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", close);
+  process.on("SIGINT", close);
+} else {
+  app.get("/api/*", (req, reply) => proxy(INDEXER, "/api", req, reply));
+}
+app.get("/keeper/*", (req, reply) =>
+  KEEPER_ON ? proxy(KEEPER, "/keeper", req, reply) : reply.code(503).send({ error: "keeper offline" }),
+);
 
 // Link-preview images. /og-default.png ships as a static file; report cards render on demand.
 const defaultPng = renderPng(defaultSvg());
@@ -147,4 +178,6 @@ app.setNotFoundHandler((req, reply) => {
 });
 
 await app.listen({ port: PORT, host: process.env.WEB_HOST ?? "0.0.0.0" });
-console.log(`plumbline web on :${PORT} (indexer ${INDEXER})`);
+console.log(
+  `plumbline web on :${PORT} (indexer ${EMBED ? "embedded" : INDEXER}, keeper ${KEEPER_ON ? KEEPER : "off"}, public ${PUBLIC_URL || "request host"})`,
+);

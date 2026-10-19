@@ -1,0 +1,13 @@
+.git
+**/node_modules
+**/dist
+**/dist-server
+.env
+.env.*
+!.env.example
+data
+contracts/out
+contracts/cache
+contracts/broadcast
+contracts/lib
+*.log

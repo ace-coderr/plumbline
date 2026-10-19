@@ -56,7 +56,7 @@ function StatusBar() {
       </span>
       <span className="num flex shrink-0 items-center gap-1.5">
         <Dot tone={k ? "pass" : "none"} live={Boolean(k)} />
-        keeper {k ? `${fmtInt(k.totals.probes)} probes` : "unreachable"}
+        keeper {k ? `${fmtInt(k.totals.probes)} probes` : "offline"}
       </span>
       <span className="num hidden shrink-0 sm:inline">chain {deployment.chainId}</span>
       <span className="ml-auto hidden gap-4 md:flex">

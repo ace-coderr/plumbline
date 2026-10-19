@@ -655,14 +655,19 @@ export class Queries {
   // Depth report
   // -------------------------------------------------------------------------------------------
 
-  report(token: string, window: string | undefined): DepthReport | null {
-    const m = this.db
+  /** The market a token's report covers: the one with the most campaigns, i.e. the one being probed. */
+  private reportMarket(token: string): MarketRow | undefined {
+    return this.db
       .prepare(
         `SELECT m.* FROM markets m LEFT JOIN campaigns c ON c.market_id = m.id
          WHERE lower(m.base_symbol) = lower(?) OR lower(m.base) = lower(?)
          GROUP BY m.id ORDER BY COUNT(c.id) DESC, m.id LIMIT 1`,
       )
       .get(token, token) as MarketRow | undefined;
+  }
+
+  report(token: string, window: string | undefined): DepthReport | null {
+    const m = this.reportMarket(token);
     if (!m) return null;
     const { base, quote } = this.refs(m);
     const span = parseWindow(window, 7 * 86_400);
@@ -676,32 +681,36 @@ export class Queries {
       )
       .get(m.id, from) as { n: number; covered: number | null; checks: number | null };
 
-    // Depth and spread from inventory-verified samples.
-    const rows = this.db
-      .prepare("SELECT * FROM quotes_sampled WHERE market_id = ? AND ts >= ? AND live = 1 ORDER BY ts")
-      .all(m.id, from) as SampleRow[];
-    const byTs = new Map<number, SampleRow[]>();
-    for (const r of rows) {
-      const list = byTs.get(r.ts);
+    // Depth and spread from the quotes each probe verified: a passing ProbeResult means the quote was
+    // fresh, tight, deep and fully backed at that instant. Built from on-chain events, so a fresh
+    // database rebuilds it exactly by backfilling.
+    const verified = this.db
+      .prepare(
+        `SELECT r.campaign_id, r.nonce, r.bid_px, r.ask_px, r.bid_size, r.ask_size
+         FROM probe_results r JOIN campaigns c ON c.id = r.campaign_id
+         WHERE c.market_id = ? AND r.ts >= ? AND r.passed = 1
+         ORDER BY r.campaign_id, r.nonce`,
+      )
+      .all(m.id, from) as { campaign_id: number; nonce: number; bid_px: string; ask_px: string; bid_size: string; ask_size: string }[];
+    const byProbe = new Map<string, typeof verified>();
+    for (const r of verified) {
+      const k = `${r.campaign_id}:${r.nonce}`;
+      const list = byProbe.get(k);
       if (list) list.push(r);
-      else byTs.set(r.ts, [r]);
+      else byProbe.set(k, [r]);
     }
-    const stamps = [...byTs.keys()];
-    const step = Math.max(1, Math.floor(stamps.length / 4_000));
     const bands = [25, 50];
     const askAt: bigint[][] = bands.map(() => []);
     const bidAt: bigint[][] = bands.map(() => []);
     const spreads: number[] = [];
-    for (let i = 0; i < stamps.length; i += step) {
-      const group = byTs.get(stamps[i] as number) ?? [];
+    for (const group of byProbe.values()) {
       let bestBid = 0n;
       let bestAsk = 0n;
-      for (const s of group) {
-        // Inventory-verified: only the part of each side the vault can actually pay out counts.
-        const bid = BigInt(s.bid_px);
-        const ask = BigInt(s.ask_px);
-        if (BigInt(s.bid_size) > 0n && bid > bestBid) bestBid = bid;
-        if (BigInt(s.ask_size) > 0n && (bestAsk === 0n || ask < bestAsk)) bestAsk = ask;
+      for (const q of group) {
+        const bid = BigInt(q.bid_px);
+        const ask = BigInt(q.ask_px);
+        if (BigInt(q.bid_size) > 0n && bid > bestBid) bestBid = bid;
+        if (BigInt(q.ask_size) > 0n && (bestAsk === 0n || ask < bestAsk)) bestAsk = ask;
       }
       if (bestBid === 0n || bestAsk === 0n || bestAsk <= bestBid) continue;
       spreads.push(Number(spreadBps(bestBid, bestAsk)));
@@ -709,18 +718,12 @@ export class Queries {
       bands.forEach((bps, bi) => {
         let askBase = 0n;
         let bidQuote = 0n;
-        for (const s of group) {
-          const ask = BigInt(s.ask_px);
-          const bid = BigInt(s.bid_px);
-          if (ask * 10_000n <= mid * BigInt(10_000 + bps)) {
-            const size = BigInt(s.ask_size);
-            const backed = BigInt(s.free_base);
-            askBase += size < backed ? size : backed;
-          }
+        for (const q of group) {
+          const ask = BigInt(q.ask_px);
+          const bid = BigInt(q.bid_px);
+          if (ask * 10_000n <= mid * BigInt(10_000 + bps)) askBase += BigInt(q.ask_size);
           if (bid * 10_000n >= mid * BigInt(10_000 - bps)) {
-            const notional = quoteNotional(BigInt(s.bid_size), bid, base.decimals, quote.decimals);
-            const backed = BigInt(s.free_quote);
-            bidQuote += notional < backed ? notional : backed;
+            bidQuote += quoteNotional(BigInt(q.bid_size), bid, base.decimals, quote.decimals);
           }
         }
         (askAt[bi] as bigint[]).push(askBase);
@@ -792,9 +795,7 @@ export class Queries {
 
   /** Paginated probe log behind a report, newest first. */
   reportProbes(token: string, offset: number, limit: number): { total: number; probes: ProbeView[] } | null {
-    const m = this.db
-      .prepare("SELECT * FROM markets WHERE lower(base_symbol) = lower(?) OR lower(base) = lower(?) ORDER BY id LIMIT 1")
-      .get(token, token) as MarketRow | undefined;
+    const m = this.reportMarket(token);
     if (!m) return null;
     const total = (
       this.db

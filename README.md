@@ -224,6 +224,16 @@ pnpm stack
 `pnpm stack --dev` runs from sources with the Vite dev server on :5173. Each service also runs on
 its own: `pnpm --filter @plumbline/keeper start` and so on.
 
+### Public deployment (Railway)
+
+The public site is one always-on service built from the [`Dockerfile`](Dockerfile)
+([`railway.json`](railway.json) selects it). The web server embeds the indexer
+(`EMBED_INDEXER=true`): it serves the dashboard, the API under `/api`, and the link-preview cards
+from one process, with SQLite on a persistent volume mounted at `/data`. The keeper and maker bots
+stay off: both campaigns are settled. On an empty volume the indexer backfills from the deploy
+block, so the full probe history rebuilds itself on first boot. Depth and spread in reports are
+computed from probe events, so nothing depends on live bots.
+
 ### Indexer API (`:8788`, proxied at `/api` by the web server)
 
 | route | |

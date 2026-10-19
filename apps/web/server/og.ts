@@ -15,8 +15,9 @@ export interface CardData {
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// The production image installs IBM Plex (fonts-ibm-plex); the rest are local-dev fallbacks.
 const MONO = "IBM Plex Mono, JetBrains Mono, Consolas, DejaVu Sans Mono, Menlo, monospace";
-const DISPLAY = "Bricolage Grotesque, Segoe UI Black, Arial Black, Helvetica, sans-serif";
+const DISPLAY = "Bricolage Grotesque, IBM Plex Sans, Segoe UI Black, Arial Black, Helvetica, sans-serif";
 const SANS = "IBM Plex Sans, Segoe UI, Helvetica, Arial, sans-serif";
 
 /** A box with a hard 8px offset shadow, the card's one structural motif. */
@@ -83,7 +84,7 @@ export function defaultSvg(): string {
 export function renderPng(svg: string, width?: number): Buffer {
   const r = new Resvg(svg, {
     fitTo: width ? { mode: "width", value: width } : { mode: "original" },
-    font: { loadSystemFonts: true, defaultFontFamily: "Consolas" },
+    font: { loadSystemFonts: true, defaultFontFamily: process.platform === "win32" ? "Consolas" : "IBM Plex Sans" },
     background: P.bg,
   });
   return r.render().asPng();

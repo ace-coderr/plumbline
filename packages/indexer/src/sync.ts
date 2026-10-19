@@ -48,9 +48,11 @@ export class Syncer {
     private readonly db: DB,
     private readonly client: PublicClient,
     private readonly log: Logger,
+    startBlock: number = deployment.deployBlock,
   ) {
+    // Resume from the persisted cursor; a fresh database starts just before startBlock.
     const saved = getMeta(db, "cursor");
-    this.cursor = saved ? Number(saved) : Math.max(0, deployment.deployBlock - 1);
+    this.cursor = saved ? Number(saved) : Math.max(0, startBlock - 1);
   }
 
   private vaultAddresses(): string[] {

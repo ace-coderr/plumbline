@@ -22,8 +22,18 @@ function cached<T>(ttlMs: number) {
   };
 }
 
+/** Standalone API server (local development: indexer on its own port). */
 export function buildApi(q: Queries, sync: Syncer, hypeUsd: () => number | null): FastifyInstance {
   const app = Fastify({ logger: false });
+  registerApi(app, q, sync, hypeUsd);
+  return app;
+}
+
+/**
+ * Register the API routes on any Fastify instance. The production web server mounts these under
+ * /api so web and API run as one process.
+ */
+export function registerApi(app: FastifyInstance, q: Queries, sync: Syncer, hypeUsd: () => number | null): void {
   const reportCache = cached<ReturnType<Queries["report"]>>(20_000);
   const econCache = cached<ReturnType<Queries["economics"]>>(5_000);
 
@@ -83,6 +93,4 @@ export function buildApi(q: Queries, sync: Syncer, hypeUsd: () => number | null)
   );
 
   app.get("/economics", async () => econCache("all", () => q.economics(hypeUsd())));
-
-  return app;
 }

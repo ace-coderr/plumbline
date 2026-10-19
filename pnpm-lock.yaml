@@ -33,6 +33,9 @@ importers:
       '@fastify/static':
         specifier: ^8.0.3
         version: 8.3.0
+      '@plumbline/indexer':
+        specifier: workspace:*
+        version: link:../../packages/indexer
       '@plumbline/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -85,6 +88,9 @@ importers:
       tailwindcss:
         specifier: ^3.4.17
         version: 3.4.19(tsx@4.23.15)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.15
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

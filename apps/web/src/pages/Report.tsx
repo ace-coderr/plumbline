@@ -149,7 +149,7 @@ export function ReportPage() {
             </div>
 
             <div className="mt-10 grid gap-x-8 gap-y-7 sm:grid-cols-3">
-              <Figure label="Median spread" value={r.medianSpreadBps === null ? "—" : r.medianSpreadBps.toFixed(1)} unit="bps" sub="best bid to best ask, sampled" />
+              <Figure label="Median spread" value={r.medianSpreadBps === null ? "—" : r.medianSpreadBps.toFixed(1)} unit="bps" sub="best bid to best ask, at each probe" />
               {r.depth.map((d) => (
                 <Figure
                   key={d.bps}
@@ -158,8 +158,8 @@ export function ReportPage() {
                   unit={r.quote.symbol}
                   sub={
                     <>
-                      bid side; ask side <N>{fmtAmt(d.askBase, r.token.decimals, 4)}</N> {r.token.symbol}. Medians, counting only
-                      inventory the vaults held.
+                      bid side; ask side <N>{fmtAmt(d.askBase, r.token.decimals, 4)}</N> {r.token.symbol}. Medians over probes,
+                      counting only quotes the probe verified as backed.
                     </>
                   }
                 />
