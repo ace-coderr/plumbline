@@ -1,0 +1,9 @@
+{
+  "campaigns": "0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c",
+  "chainId": 99801,
+  "deployer": "0x2465E835FAB3B9F07d6478177416611D11F46E03",
+  "factory": "0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4",
+  "maxAge": 2,
+  "router": "0x6E1937B16a8B23401133350a84cb6062c03848a6",
+  "withdrawDelay": 30
+}

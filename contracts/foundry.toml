@@ -1,0 +1,34 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.28"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 1000
+via_ir = true
+remappings = [
+  "forge-std/=lib/forge-std/src/",
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+]
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
+[profile.default.fuzz]
+runs = 1024
+
+[profile.ci.fuzz]
+runs = 10000
+
+[rpc_endpoints]
+elysium = "${ELYSIUM_RPC_URL}"
+
+[fmt]
+line_length = 110
+tab_width = 4
+
+[lint]
+# Plumbline is time-based by design: quote freshness, probe intervals and epochs all key off
+# block.timestamp. Sequencer timestamp drift on Elysium is bounded and far below every window used.
+exclude_lints = ["block-timestamp"]
