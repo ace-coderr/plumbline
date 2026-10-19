@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../dist-server",
+    "rootDir": "..",
+    "types": [
+      "node"
+    ],
+    "declaration": false
+  },
+  "include": [
+    "./*.ts",
+    "../tailwind.config.ts"
+  ]
+}

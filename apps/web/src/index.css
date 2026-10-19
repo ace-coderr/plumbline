@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-bg font-sans text-[14px] leading-relaxed text-ink antialiased;
+  }
+  ::selection {
+    @apply bg-highlight text-ink;
+  }
+  input,
+  select,
+  textarea {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Every numeral in data positions is monospace with tabular figures. */
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .num {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+  }
+  .label {
+    @apply text-2xs font-semibold uppercase tracking-label text-muted;
+  }
+  .display {
+    @apply font-display font-extrabold tracking-display text-ink;
+  }
+  /* Marker highlight behind the one phrase that matters in a section. */
+  .marker {
+    @apply rounded-[3px] bg-highlight px-[0.15em];
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .link {
+    @apply font-medium text-violet underline decoration-2 underline-offset-2 hover:text-ink;
+  }
+  /* Hard offset shadow that presses toward its shadow on hover. */
+  .press {
+    @apply shadow-brut transition-[transform,box-shadow] duration-75;
+  }
+  .press:hover {
+    @apply translate-x-px translate-y-px shadow-brut-hover;
+  }
+  .press:active {
+    @apply translate-x-[3px] translate-y-[3px] shadow-none;
+  }
+}
+
+@keyframes plumb-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.pulse {
+  animation: plumb-pulse 1.6s ease-in-out infinite;
+}

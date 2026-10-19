@@ -1,0 +1,150 @@
+/**
+ * Production server for the dashboard. Serves the built SPA, proxies /api to the indexer and
+ * /keeper to the keeper, and gives /report/:token pages real link previews: OG/Twitter meta tags
+ * filled from the live report, plus a rendered PNG card at /og/report/:token.png.
+ */
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import fastifyStatic from "@fastify/static";
+import { formatUnits } from "viem";
+import type { DepthReport } from "@plumbline/shared";
+import { defaultSvg, renderPng, reportSvg, type CardData } from "./og.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+// Compiled to dist-server/server/, so the Vite build sits two levels up.
+const dist = join(here, "..", "..", "dist");
+const INDEXER = process.env.INDEXER_URL ?? "http://127.0.0.1:8788";
+const KEEPER = process.env.KEEPER_URL ?? "http://127.0.0.1:8787";
+const PORT = Number(process.env.WEB_PORT ?? 8080);
+const PUBLIC_URL = process.env.PUBLIC_URL?.replace(/\/$/, "");
+
+if (!existsSync(join(dist, "index.html"))) {
+  throw new Error("apps/web/dist is missing; run pnpm --filter @plumbline/web build first");
+}
+const template = readFileSync(join(dist, "index.html"), "utf8");
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function origin(req: FastifyRequest): string {
+  if (PUBLIC_URL) return PUBLIC_URL;
+  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
+  return `${proto}://${req.headers.host ?? `localhost:${PORT}`}`;
+}
+
+async function fetchReport(token: string): Promise<DepthReport | null> {
+  try {
+    const res = await fetch(`${INDEXER}/reports/${encodeURIComponent(token)}?window=30d`, { signal: AbortSignal.timeout(4_000) });
+    return res.ok ? ((await res.json()) as DepthReport) : null;
+  } catch {
+    return null;
+  }
+}
+
+function card(r: DepthReport): CardData {
+  const band = r.depth.find((d) => d.bps === 50) ?? r.depth[0];
+  const depth = band ? Number(formatUnits(BigInt(band.bidQuote), r.quote.decimals)) : 0;
+  return {
+    pair: `${r.token.symbol} / ${r.quote.symbol}`,
+    uptime: r.verifiedUptime === null ? "—" : `${(r.verifiedUptime * 100).toFixed(2)}%`,
+    spread: r.medianSpreadBps === null ? "—" : `${r.medianSpreadBps.toFixed(1)} bps`,
+    // Small depths keep significant digits instead of rounding to zero.
+    depth: `${depth >= 1 ? Math.round(depth).toLocaleString("en-US") : depth.toPrecision(2)} ${r.quote.symbol}`,
+    probes: r.probes.toLocaleString("en-US"),
+    makers: String(r.makers),
+    footnote: `Every probe is an Elysium transaction. Campaigns ${r.campaigns.map((c) => `#${c}`).join(" ") || "—"}.`,
+    demo: Boolean(r.quote.demo || r.token.demo),
+  };
+}
+
+function page(meta: { title: string; description: string; image: string; url: string }): string {
+  const tags = `
+    <title>${esc(meta.title)}</title>
+    <meta name="description" content="${esc(meta.description)}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Plumbline" />
+    <meta property="og:title" content="${esc(meta.title)}" />
+    <meta property="og:description" content="${esc(meta.description)}" />
+    <meta property="og:url" content="${esc(meta.url)}" />
+    <meta property="og:image" content="${esc(meta.image)}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${esc(meta.title)}" />
+    <meta name="twitter:description" content="${esc(meta.description)}" />
+    <meta name="twitter:image" content="${esc(meta.image)}" />
+  `;
+  return template.replace(/<!--og:start-->[\s\S]*<!--og:end-->/, tags);
+}
+
+const app = Fastify({ logger: false });
+
+await app.register(fastifyStatic, { root: dist, wildcard: false, index: false, maxAge: "1h" });
+
+// API passthrough (read-only).
+async function proxy(base: string, prefix: string, req: FastifyRequest, reply: FastifyReply) {
+  const path = req.url.slice(prefix.length) || "/";
+  try {
+    const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(10_000) });
+    reply.code(res.status).header("content-type", res.headers.get("content-type") ?? "application/json");
+    return reply.send(Buffer.from(await res.arrayBuffer()));
+  } catch {
+    return reply.code(502).send({ error: "upstream unavailable" });
+  }
+}
+app.get("/api/*", (req, reply) => proxy(INDEXER, "/api", req, reply));
+app.get("/keeper/*", (req, reply) => proxy(KEEPER, "/keeper", req, reply));
+
+// Link-preview images. /og-default.png ships as a static file; report cards render on demand.
+const defaultPng = renderPng(defaultSvg());
+
+const cardCache = new Map<string, { at: number; png: Buffer }>();
+app.get<{ Params: { token: string } }>("/og/report/:token.png", async (req, reply) => {
+  const token = req.params.token;
+  const hit = cardCache.get(token);
+  if (hit && Date.now() - hit.at < 60_000) return reply.type("image/png").send(hit.png);
+  const r = await fetchReport(token);
+  const png = r ? renderPng(reportSvg(card(r))) : defaultPng;
+  cardCache.set(token, { at: Date.now(), png });
+  return reply.type("image/png").header("cache-control", "public, max-age=60").send(png);
+});
+
+// Report pages get report-specific meta; everything else gets the default card.
+app.get<{ Params: { token: string } }>("/report/:token", async (req, reply) => {
+  const token = req.params.token;
+  const r = await fetchReport(token);
+  const base = origin(req);
+  const html = r
+    ? page({
+        title: `${r.token.symbol} depth report · ${card(r).uptime} verified uptime`,
+        description: `${card(r).uptime} uptime over ${r.probes.toLocaleString("en-US")} on-chain probes, median spread ${card(r).spread}, ${card(r).depth} within ±50 bps. Every probe is an Elysium transaction.`,
+        image: `${base}/og/report/${encodeURIComponent(token)}.png`,
+        url: `${base}/report/${encodeURIComponent(token)}`,
+      })
+    : page({
+        title: `${token} depth report · Plumbline`,
+        description: "Probe-verified liquidity uptime on Elysium.",
+        image: `${base}/og-default.png`,
+        url: `${base}/report/${encodeURIComponent(token)}`,
+      });
+  return reply.type("text/html").header("cache-control", "no-cache").send(html);
+});
+
+app.setNotFoundHandler((req, reply) => {
+  if (req.method !== "GET") return reply.code(404).send();
+  const base = origin(req);
+  return reply
+    .type("text/html")
+    .header("cache-control", "no-cache")
+    .send(
+      page({
+        title: "Plumbline · verifiable liquidity uptime",
+        description: "Quote vaults, permissionless probes and bonded makers: market-making uptime you can verify on-chain.",
+        image: `${base}/og-default.png`,
+        url: `${base}${req.url}`,
+      }),
+    );
+});
+
+await app.listen({ port: PORT, host: process.env.WEB_HOST ?? "0.0.0.0" });
+console.log(`plumbline web on :${PORT} (indexer ${INDEXER})`);
