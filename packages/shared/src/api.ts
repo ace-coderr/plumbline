@@ -135,6 +135,7 @@ export interface UptimeBucket {
 
 export interface UptimeResponse {
   pair: string;
+  /** A span such as "6h", or "all" for every campaign on the market. */
   window: string;
   from: number;
   to: number;
@@ -249,11 +250,24 @@ export interface DepthBand {
   bidQuote: string;
 }
 
+/** Probe coverage within one campaign epoch. An epoch with no probes has probes = 0. */
+export interface EpochUptime {
+  campaignId: number;
+  epoch: number;
+  start: number;
+  end: number;
+  /** Probes that checked at least one vault. */
+  probes: number;
+  /** Of those, probes in which at least one vault passed. */
+  covered: number;
+}
+
 export interface DepthReport {
   token: TokenRef;
   pair: string;
   quote: TokenRef;
   generatedAt: number;
+  /** Window the figures cover. For window "all": first campaign start to last campaign end. */
   windowFrom: number;
   windowTo: number;
   verifiedUptime: number | null;
@@ -263,7 +277,8 @@ export interface DepthReport {
   makers: number;
   depth: DepthBand[];
   campaigns: number[];
-  daily: { day: number; uptime: number | null; probes: number; medianSpreadBps: number | null }[];
+  /** Every begun epoch of this market's campaigns inside the window, oldest first. */
+  epochs: EpochUptime[];
   probeLog: ProbeView[];
   contracts: { campaigns: Address; factory: Address; router: Address };
 }

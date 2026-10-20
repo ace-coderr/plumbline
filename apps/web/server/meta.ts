@@ -19,6 +19,7 @@ export interface CardData {
 
 /** Card figures from a depth report. Shared by the live server, the static exporter and prerender. */
 export function cardFromReport(r: DepthReport): CardData {
+  // Bid-side depth within ±50 bps of mid, from quotes the probes verified as backed.
   const band = r.depth.find((d) => d.bps === 50) ?? r.depth[0];
   const depth = band ? Number(formatUnits(BigInt(band.bidQuote), r.quote.decimals)) : 0;
   return {
@@ -48,7 +49,7 @@ export function reportCopy(r: DepthReport, _token: string): { title: string; des
   const c = cardFromReport(r);
   return {
     title: `${r.token.symbol} depth report · ${c.uptime} verified uptime`,
-    description: `${c.uptime} uptime over ${r.probes.toLocaleString("en-US")} on-chain probes, median spread ${c.spread}, ${c.depth} within ±50 bps. Every probe is an Elysium transaction.`,
+    description: `${c.uptime} uptime over ${r.probes.toLocaleString("en-US")} on-chain probes, median spread ${c.spread}, verified depth ${c.depth}. Every probe is an Elysium transaction.`,
   };
 }
 

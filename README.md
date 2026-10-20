@@ -241,6 +241,9 @@ pnpm --filter @plumbline/web build:static           # vite build --mode static +
 * `vite build --mode static` makes the app read those files instead of the REST API (same paths, one
   shared mapping in `packages/shared/src/snapshot.ts`). The default build and `pnpm stack` still use
   the live API: this is a second mode, not a replacement.
+* Rolling windows (24h, 7d) measured back from export time would all hold the same probes, so frozen
+  pages show one window, labelled: the campaign window, from the first campaign's start to the last
+  one's end. The live build keeps the window toggles.
 * Every page that shows data carries the snapshot's block height (linked to the explorer) and UTC
   time, and the keeper reads "not running". Every probe, settlement and the slash still links to its
   transaction on the Elysium explorer, so the snapshot can be checked without us.
@@ -264,10 +267,10 @@ backfills from the deploy block, so the full history rebuilds itself on first bo
 |---|---|
 | `GET /markets` | every pair: live uptime, best bid/ask, spread, depth, makers |
 | `GET /markets/:pair` | ladder (all vaults, with on-chain inventory), recent fills, failed fills |
-| `GET /markets/:pair/uptime?window=24h` | bucketed probe coverage + per-probe results |
+| `GET /markets/:pair/uptime?window=24h` | bucketed probe coverage + per-probe results; `window=all` spans the market's campaigns |
 | `GET /makers/:address` | vaults, bonds, per-epoch scores, earnings |
 | `GET /campaigns`, `GET /campaigns/:id` | terms, leaderboard, epoch history, probes, penalties |
-| `GET /reports/:token?window=7d` | the public depth report |
+| `GET /reports/:token?window=7d` | the public depth report, with per-epoch coverage; `window=all` as above |
 | `GET /reports/:token/probes?offset&limit` | full probe log behind a report |
 | `GET /economics` | probe and quote gas from receipts, cadence, block time |
 
@@ -290,7 +293,7 @@ the same pages from the snapshot; step 3 needs the live stack):
 4. **35–45s · Campaign** (`/campaign/1`): leaderboard with points, uptime, median spread and earnings;
    the 12 bps and 24 bps makers side by side. Every epoch was settled on-chain by the keeper.
 5. **45–55s · Report** (`/report/WHYPE`): the shareable certificate. Verified uptime in very large
-   type, the campaign terms in plain sentences, inventory-backed depth at ±25/±50 bps, and every probe
+   type, the campaign terms in plain sentences, inventory-backed depth, coverage per epoch, and every probe
    linked to its transaction. Shared links unfurl with the number on the card.
 6. **55–60s · Economics** (`/economics`): probes and quote updates measured from receipts next to the
    same cadence on a one-second chain.

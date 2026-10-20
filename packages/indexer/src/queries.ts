@@ -10,6 +10,7 @@ import {
   type CampaignView,
   type DepthReport,
   type EconomicsResponse,
+  type EpochUptime,
   type EpochView,
   type FailedFillView,
   type FillView,
@@ -118,6 +119,9 @@ export function parseWindow(w: string | undefined, fallback = 86_400): number {
   return Math.min(n * unit, 30 * 86_400);
 }
 
+/** Window covering every campaign on a market rather than a span back from now. */
+export const ALL_WINDOW = "all";
+
 export class Queries {
   constructor(private readonly db: DB) {}
 
@@ -183,6 +187,20 @@ export class Queries {
       spreadBps: sp < 0n ? null : Number(sp),
       uptime24h: this.vaultUptime(s.vault, now() - 86_400),
     };
+  }
+
+  /**
+   * Resolve a window to [from, to]. A span ("24h") ends now; "all" runs from the first campaign's
+   * start to the last campaign's end (capped at now), so frozen data reports the campaign window.
+   */
+  private windowRange(marketId: number, window: string | undefined, fallback: number): { from: number; to: number } {
+    const to = now();
+    if (window !== ALL_WINDOW) return { from: to - parseWindow(window, fallback), to };
+    const span = this.db
+      .prepare("SELECT MIN(start_time) AS a, MAX(start_time + num_epochs * epoch_length) AS b FROM campaigns WHERE market_id = ?")
+      .get(marketId) as { a: number | null; b: number | null };
+    if (span.a === null || span.b === null) return { from: to - fallback, to };
+    return { from: span.a, to: Math.min(span.b, to) };
   }
 
   private campaignIdsFor(marketId: number): number[] {
@@ -442,23 +460,22 @@ export class Queries {
   uptime(slug: string, window: string | undefined): UptimeResponse | null {
     const m = this.marketBySlug(slug);
     if (!m) return null;
-    const span = parseWindow(window);
-    const to = now();
-    const from = to - span;
+    const { from, to } = this.windowRange(m.id, window, 86_400);
+    const span = Math.max(60, to - from);
     const bucketSeconds = Math.max(60, Math.ceil(span / 60 / 60) * 60);
 
     const probeRows = this.db
       .prepare(
         `SELECT p.* FROM probes p JOIN campaigns c ON c.id = p.campaign_id
-         WHERE c.market_id = ? AND p.ts >= ? ORDER BY p.ts DESC`,
+         WHERE c.market_id = ? AND p.ts >= ? AND p.ts <= ? ORDER BY p.ts DESC`,
       )
-      .all(m.id, from) as ProbeRow[];
+      .all(m.id, from, to) as ProbeRow[];
     const resultRows = this.db
       .prepare(
         `SELECT r.ts, r.passed, r.spread_bps FROM probe_results r JOIN campaigns c ON c.id = r.campaign_id
-         WHERE c.market_id = ? AND r.ts >= ?`,
+         WHERE c.market_id = ? AND r.ts >= ? AND r.ts <= ?`,
       )
-      .all(m.id, from) as { ts: number; passed: number; spread_bps: number }[];
+      .all(m.id, from, to) as { ts: number; passed: number; spread_bps: number }[];
 
     const buckets = new Map<number, UptimeBucket & { spreads: number[] }>();
     const bucketOf = (ts: number) => {
@@ -470,6 +487,8 @@ export class Queries {
       }
       return b;
     };
+    // Every bucket in the window exists, so a stretch without probes reads as zero, not as a gap.
+    for (let t = Math.floor(from / bucketSeconds) * bucketSeconds; t <= to; t += bucketSeconds) bucketOf(t);
     let checkedProbes = 0;
     let covered = 0;
     for (const p of probeRows) {
@@ -762,9 +781,7 @@ export class Queries {
     const m = this.reportMarket(token);
     if (!m) return null;
     const { base, quote } = this.refs(m);
-    const span = parseWindow(window, 7 * 86_400);
-    const to = now();
-    const from = to - span;
+    const { from, to } = this.windowRange(m.id, window, 7 * 86_400);
 
     const probeStats = this.db
       .prepare(
@@ -777,18 +794,28 @@ export class Queries {
     // Depth and spread from the quotes each probe verified (see verifiedBook).
     const { spreads, askAt, bidAt } = this.verifiedBook(m, from, bands);
 
-    // Daily rollup.
-    const dayRows = this.db
+    // Per-epoch rollup over every begun epoch in the window, including epochs no probe reached.
+    const epochCounts = this.db
       .prepare(
-        `SELECT (p.ts / 86400) * 86400 AS day, COUNT(*) AS n, SUM(CASE WHEN p.passed > 0 THEN 1 ELSE 0 END) AS covered
+        `SELECT p.campaign_id AS cid, p.epoch AS epoch, COUNT(*) AS n, SUM(CASE WHEN p.passed > 0 THEN 1 ELSE 0 END) AS covered
          FROM probes p JOIN campaigns c ON c.id = p.campaign_id WHERE c.market_id = ? AND p.ts >= ? AND p.checked > 0
-         GROUP BY day ORDER BY day`,
+         GROUP BY p.campaign_id, p.epoch`,
       )
-      .all(m.id, from) as { day: number; n: number; covered: number }[];
-    const daySpread = this.db.prepare(
-      `SELECT r.spread_bps FROM probe_results r JOIN campaigns c ON c.id = r.campaign_id
-       WHERE c.market_id = ? AND r.ts >= ? AND r.ts < ? AND r.passed = 1`,
-    );
+      .all(m.id, from) as { cid: number; epoch: number; n: number; covered: number }[];
+    const counted = new Map(epochCounts.map((r) => [`${r.cid}:${r.epoch}`, r]));
+    const epochs: EpochUptime[] = [];
+    const campaignRows = this.db
+      .prepare("SELECT * FROM campaigns WHERE market_id = ? ORDER BY id")
+      .all(m.id) as CampaignRow[];
+    for (const c of campaignRows) {
+      for (let e = 0; e < c.num_epochs; e++) {
+        const start = c.start_time + e * c.epoch_length;
+        const end = start + c.epoch_length;
+        if (start >= to || end <= from) continue;
+        const r = counted.get(`${c.id}:${e}`);
+        epochs.push({ campaignId: c.id, epoch: e, start, end, probes: r?.n ?? 0, covered: r?.covered ?? 0 });
+      }
+    }
 
     const makers = this.db
       .prepare(
@@ -822,14 +849,7 @@ export class Queries {
         bidQuote: medianBig(bidAt[i] as bigint[]).toString(),
       })),
       campaigns: this.campaignIdsFor(m.id),
-      daily: dayRows.map((d) => ({
-        day: d.day,
-        uptime: d.n ? d.covered / d.n : null,
-        probes: d.n,
-        medianSpreadBps: median(
-          (daySpread.all(m.id, d.day, d.day + 86_400) as { spread_bps: number }[]).map((r) => r.spread_bps),
-        ),
-      })),
+      epochs,
       probeLog: this.probeViews(probeRows),
       contracts: {
         campaigns: deployment.contracts.campaigns,

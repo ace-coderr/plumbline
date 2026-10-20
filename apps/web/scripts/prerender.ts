@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SNAPSHOT_DIR, type DepthReport } from "@plumbline/shared";
+import { SNAPSHOT_DIR, SNAPSHOT_WINDOW, type DepthReport } from "@plumbline/shared";
 import { reportCopy, withMeta } from "../server/meta.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,9 +37,9 @@ writeFileSync(
 const written: string[] = [];
 if (existsSync(reportsDir)) {
   for (const f of readdirSync(reportsDir)) {
-    const m = /^(.+)-30d\.json$/.exec(f);
-    if (!m?.[1]) continue;
-    const token = m[1];
+    const suffix = `-${SNAPSHOT_WINDOW}.json`;
+    if (!f.endsWith(suffix)) continue;
+    const token = f.slice(0, -suffix.length);
     const report = JSON.parse(readFileSync(join(reportsDir, f), "utf8")) as DepthReport | null;
     if (!report) continue;
     const out = join(dist, "report", `${token}.html`);

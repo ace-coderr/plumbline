@@ -1,16 +1,64 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { addressUrl, deployment } from "@plumbline/shared";
-import { useCampaign, useReport, useReportProbes } from "../lib/api";
-import { dateTime, duration, fmtAmt, fmtInt, fmtPct, short, tone, toneText } from "../lib/format";
-import { DailyBars } from "../components/charts";
+import { addressUrl, deployment, SNAPSHOT_WINDOW, type DepthReport } from "@plumbline/shared";
+import { STATIC, useCampaign, useReport, useReportProbes } from "../lib/api";
+import { dateTime, duration, fmtAmt, fmtInt, fmtPct, short, tone, toneText, utcWindow } from "../lib/format";
+import { EpochGrid } from "../components/charts";
 import { Wordmark } from "../components/Brand";
 import { SnapshotStamp } from "../components/Snapshot";
 import { Button, DemoTag, ErrorNote, Loading, N, Page, Segmented, Stamp, Table, Td, Th, TxLink, cx } from "../components/ui";
 
+// Rolling windows for live data. Frozen data has one window, the campaigns' own (see snapshot.ts).
 const WINDOWS = ["24h", "7d", "30d"] as const;
 type Win = (typeof WINDOWS)[number];
 const PAGE = 25;
+
+/**
+ * Depth figures. Makers post one price level each, so when every band holds the same quotes the
+ * bands are collapsed into one figure instead of printing the same number twice.
+ */
+function DepthFigures({ r }: { r: DepthReport }) {
+  const [first] = r.depth;
+  if (!first) return null;
+  const same = r.depth.every((d) => d.bidQuote === first.bidQuote && d.askBase === first.askBase);
+  const widest = r.depth.at(-1) ?? first;
+  const backed = "Medians over probes, counting only quotes the probe verified as backed.";
+  if (same) {
+    return (
+      <div className="sm:col-span-2">
+        <Figure
+          label="Verified depth"
+          value={fmtAmt(widest.bidQuote, r.quote.decimals, 2)}
+          unit={r.quote.symbol}
+          sub={
+            <>
+              Bid side; ask side <N>{fmtAmt(widest.askBase, r.token.decimals, 4)}</N> {r.token.symbol}. Each maker posts a
+              single price level, and every verified quote sat inside ±{first.bps} bps of mid, so the ±
+              {r.depth.map((d) => d.bps).join(" and ±")} bps bands hold the same quotes. {backed}
+            </>
+          }
+        />
+      </div>
+    );
+  }
+  return (
+    <>
+      {r.depth.map((d) => (
+        <Figure
+          key={d.bps}
+          label={`Depth ±${d.bps} bps`}
+          value={fmtAmt(d.bidQuote, r.quote.decimals, 2)}
+          unit={r.quote.symbol}
+          sub={
+            <>
+              bid side; ask side <N>{fmtAmt(d.askBase, r.token.decimals, 4)}</N> {r.token.symbol}. {backed}
+            </>
+          }
+        />
+      ))}
+    </>
+  );
+}
 
 function Figure({ label, value, unit, sub }: { label: string; value: string; unit?: string; sub?: React.ReactNode }) {
   return (
@@ -57,7 +105,7 @@ export function ReportPage() {
   const [win, setWin] = useState<Win>("24h");
   const [page, setPage] = useState(0);
   const [copied, setCopied] = useState(false);
-  const report = useReport(token, win);
+  const report = useReport(token, STATIC ? SNAPSHOT_WINDOW : win);
   const probes = useReportProbes(token, page * PAGE, PAGE);
 
   if (report.isLoading) {
@@ -98,14 +146,20 @@ export function ReportPage() {
             <Wordmark size={22} />
           </Link>
           <div className="flex items-center gap-2">
-            <Segmented
-              value={win}
-              options={WINDOWS}
-              onChange={(w) => {
-                setWin(w);
-                setPage(0);
-              }}
-            />
+            {STATIC ? (
+              <span className="num rounded-[8px] border-2 border-ink bg-paper px-3 py-1.5 text-xs">
+                <span className="font-bold uppercase tracking-label">Campaign window</span> {utcWindow(r.windowFrom, r.windowTo)}
+              </span>
+            ) : (
+              <Segmented
+                value={win}
+                options={WINDOWS}
+                onChange={(w) => {
+                  setWin(w);
+                  setPage(0);
+                }}
+              />
+            )}
             <Button className="h-9 px-3 text-xs" onClick={() => void share()}>
               {copied ? "Copied" : "Copy link"}
             </Button>
@@ -155,20 +209,7 @@ export function ReportPage() {
 
             <div className="mt-10 grid gap-x-8 gap-y-7 sm:grid-cols-3">
               <Figure label="Median spread" value={r.medianSpreadBps === null ? "—" : r.medianSpreadBps.toFixed(1)} unit="bps" sub="best bid to best ask, at each probe" />
-              {r.depth.map((d) => (
-                <Figure
-                  key={d.bps}
-                  label={`Depth ±${d.bps} bps`}
-                  value={fmtAmt(d.bidQuote, r.quote.decimals, 2)}
-                  unit={r.quote.symbol}
-                  sub={
-                    <>
-                      bid side; ask side <N>{fmtAmt(d.askBase, r.token.decimals, 4)}</N> {r.token.symbol}. Medians over probes,
-                      counting only quotes the probe verified as backed.
-                    </>
-                  }
-                />
-              ))}
+              <DepthFigures r={r} />
               <Figure label="Probes" value={fmtInt(r.probes)} sub={<><N>{fmtInt(r.vaultChecks)}</N> individual vault checks</>} />
               <Figure label="Makers probed" value={fmtInt(r.makers)} sub="distinct vault owners" />
               <Figure label="Campaigns" value={r.campaigns.map((c) => `#${c}`).join(" ") || "—"} sub="funding the probes" />
@@ -185,11 +226,15 @@ export function ReportPage() {
               </section>
             )}
 
-            {r.daily.length > 0 && (
+            {r.epochs.length > 0 && (
               <section className="mt-10 border-t-2 border-ink pt-5">
-                <h2 className="font-display text-xl font-extrabold tracking-display">Daily uptime</h2>
+                <h2 className="font-display text-xl font-extrabold tracking-display">Uptime by epoch</h2>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  One cell per campaign epoch, filled by the share of its probes that found a passing maker and labelled
+                  covered/probes. An epoch no probe reached is an empty cell labelled 0; it scores nothing for any maker.
+                </p>
                 <div className="mt-3">
-                  <DailyBars data={r.daily} />
+                  <EpochGrid epochs={r.epochs} />
                 </div>
               </section>
             )}

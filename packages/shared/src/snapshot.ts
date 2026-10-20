@@ -7,9 +7,11 @@
 /** Where snapshot files live under the web app's public root. */
 export const SNAPSHOT_DIR = "snapshot";
 
-/** Windows the dashboard offers; each is exported as its own file. */
-export const SNAPSHOT_UPTIME_WINDOWS = ["1h", "6h", "24h", "7d"] as const;
-export const SNAPSHOT_REPORT_WINDOWS = ["24h", "7d", "30d"] as const;
+/**
+ * Windows exported for frozen data. Rolling windows (24h, 7d) measured back from export time would
+ * all hold the same probes, so a snapshot carries one window: every campaign on the market.
+ */
+export const SNAPSHOT_WINDOW = "all";
 
 /** Provenance stamped on every snapshot. */
 export interface SnapshotMeta {

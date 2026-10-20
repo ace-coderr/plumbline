@@ -21,8 +21,7 @@ import {
   elysiumTestnet,
   ELYSIUM_TESTNET,
   SNAPSHOT_DIR,
-  SNAPSHOT_REPORT_WINDOWS,
-  SNAPSHOT_UPTIME_WINDOWS,
+  SNAPSHOT_WINDOW,
   snapshotFile,
   type IndexerHealth,
   type SnapshotMeta,
@@ -97,7 +96,7 @@ async function main(): Promise<void> {
     const detail = q.marketDetail(m.pair);
     write(`/markets/${m.pair}`, detail);
     for (const v of detail?.book ?? []) makers.add(v.owner);
-    for (const w of SNAPSHOT_UPTIME_WINDOWS) write(`/markets/${m.pair}/uptime?window=${w}`, q.uptime(m.pair, w));
+    write(`/markets/${m.pair}/uptime?window=${SNAPSHOT_WINDOW}`, q.uptime(m.pair, SNAPSHOT_WINDOW));
   }
 
   const campaigns = q.listCampaigns();
@@ -113,10 +112,10 @@ async function main(): Promise<void> {
 
   const tokens = [...new Set(markets.map((m) => m.base.symbol))];
   for (const t of tokens) {
-    for (const w of SNAPSHOT_REPORT_WINDOWS) write(`/reports/${t}?window=${w}`, q.report(t, w));
+    const report = q.report(t, SNAPSHOT_WINDOW);
+    write(`/reports/${t}?window=${SNAPSHOT_WINDOW}`, report);
     write(`/reports/${t}/probes`, q.reportProbes(t, 0, 1_000_000));
-    // Link-preview card for the shared report URL, rendered from the 30-day figures.
-    const report = q.report(t, "30d");
+    // Link-preview card for the shared report URL, from the same campaign-window figures.
     if (report) {
       const png = join(PUBLIC, "og", "report", `${t.toUpperCase()}.png`);
       mkdirSync(dirname(png), { recursive: true });

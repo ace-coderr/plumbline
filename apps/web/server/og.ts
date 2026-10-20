@@ -54,7 +54,7 @@ export function reportSvg(d: CardData): string {
   <text x="315" y="436" text-anchor="middle" font-family="${MONO}" font-size="92" font-weight="700" fill="${P.ink}">${esc(d.uptime)}</text>
   ${stat(620, 330, "MEDIAN SPREAD", d.spread)}
   ${stat(880, 330, "PROBES", d.probes)}
-  ${stat(620, 420, "DEPTH ±50 BPS", d.depth)}
+  ${stat(620, 420, "VERIFIED DEPTH", d.depth)}
   ${stat(880, 420, "MAKERS", d.makers)}
   <text x="80" y="548" font-family="${SANS}" font-size="20" fill="${P.ink}">${esc(d.footnote)}</text>
 </svg>`;

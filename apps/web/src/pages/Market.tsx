@@ -7,13 +7,14 @@ import {
   deployment,
   plumbRouterAbi,
   quoteNotional,
+  SNAPSHOT_WINDOW,
   type MarketSummary,
   type QuoteView,
 } from "@plumbline/shared";
 import { STATIC, useMarket, useUptime } from "../lib/api";
 import { ago, clock, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, px, tone, toneText, utcTime, utcWindow } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
-import { ProbeStrip, UptimeChart } from "../components/charts";
+import { ChartLegend, PROBE_STRIP_LEGEND, ProbeStrip, UptimeChart } from "../components/charts";
 import { TxStatus } from "../components/TxStatus";
 import {
   AddrLink,
@@ -38,6 +39,7 @@ import {
   Page,
 } from "../components/ui";
 
+// Rolling windows for live data. Frozen data has one window, the campaigns' own (see snapshot.ts).
 const WINDOWS = ["1h", "6h", "24h", "7d"] as const;
 type Win = (typeof WINDOWS)[number];
 
@@ -215,9 +217,9 @@ function SwapPanel({ m }: { m: MarketSummary }) {
 
 export function MarketPage() {
   const { pair = "" } = useParams();
-  const [win, setWin] = useState<Win>(STATIC ? "24h" : "6h");
+  const [win, setWin] = useState<Win>("6h");
   const market = useMarket(pair);
-  const uptime = useUptime(pair, win);
+  const uptime = useUptime(pair, STATIC ? SNAPSHOT_WINDOW : win);
 
   if (market.isLoading) return <Loading rows={6} />;
   if (market.isError || !market.data) return <ErrorNote error={market.error ?? "unknown market"} />;
@@ -287,10 +289,20 @@ export function MarketPage() {
         <div className="space-y-4">
           <Panel
             title="Uptime timeline"
-            right={<Segmented value={win} options={WINDOWS} onChange={setWin} />}
+            right={
+              STATIC ? (
+                <span className="num">
+                  {m.campaignIds.length === 0
+                    ? "no campaigns on this market"
+                    : `campaign window ${uptime.data ? utcWindow(uptime.data.from, uptime.data.to) : ""}`}
+                </span>
+              ) : (
+                <Segmented value={win} options={WINDOWS} onChange={setWin} />
+              )
+            }
           >
             {uptime.data ? (
-              uptime.data.buckets.length ? (
+              uptime.data.buckets.some((b) => b.probes > 0) ? (
                 <UptimeChart buckets={uptime.data.buckets} bucketSeconds={uptime.data.bucketSeconds} />
               ) : (
                 <Empty>No probes in this window.</Empty>
@@ -298,16 +310,9 @@ export function MarketPage() {
             ) : (
               <Loading rows={4} />
             )}
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="mt-4 space-y-1.5">
               <span className="label">Probe log, newest right · click a tick for its transaction</span>
-              <span className="flex gap-3 text-2xs text-muted">
-                <span className="flex items-center gap-1">
-                  <span className="h-2.5 w-2.5 border border-ink bg-success" /> some or all passed
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="h-2.5 w-2.5 border border-ink bg-danger" /> none passed
-                </span>
-              </span>
+              <ChartLegend items={PROBE_STRIP_LEGEND} />
             </div>
             <div className="mt-1.5">
               <ProbeStrip probes={uptime.data?.probes ?? []} max={160} />

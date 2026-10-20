@@ -5,7 +5,7 @@ import { useCampaign } from "../lib/api";
 import { useNow } from "../components/Snapshot";
 import { ago, clock, dateTime, duration, fmtAmt, fmtInt, fmtPct, tone, toneText } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
-import { EpochBars, ProbeStrip } from "../components/charts";
+import { ChartLegend, PROBE_STRIP_LEGEND, ProbeStrip } from "../components/charts";
 import { TxStatus } from "../components/TxStatus";
 import {
   AddrLink,
@@ -166,14 +166,11 @@ export function CampaignPage() {
           </Panel>
 
           <Panel title="Epoch history" pad={false}>
-            <div className="px-3 pt-3">
-              <EpochBars data={epochs.map((e) => ({ epoch: e.epoch, probes: e.probes, points: e.totalPoints }))} />
-            </div>
             <Table>
               <thead>
                 <tr>
                   <Th>Epoch</Th>
-                  <Th>Window</Th>
+                  <Th>Window (UTC)</Th>
                   <Th right>Probes</Th>
                   <Th right>Points</Th>
                   <Th right>Maker pot</Th>
@@ -186,7 +183,7 @@ export function CampaignPage() {
                   <tr key={e.epoch} className={e.start > now ? "opacity-40" : undefined}>
                     <Td mono>e{e.epoch}</Td>
                     <Td mono className="text-muted">
-                      {clock(e.start)}–{clock(e.end)}
+                      {dateTime(e.start).slice(11, 16)}–{dateTime(e.end).slice(11, 16)}
                     </Td>
                     <Td right mono>
                       {e.probes}
@@ -220,6 +217,7 @@ export function CampaignPage() {
 
         <div className="space-y-4">
           <Panel title="Recent probes">
+            <ChartLegend items={PROBE_STRIP_LEGEND} className="mb-2" />
             <ProbeStrip probes={recentProbes} max={60} />
             <div className="mt-3 max-h-[420px] space-y-0 overflow-y-auto">
               {recentProbes.slice(0, 30).map((p) => (
