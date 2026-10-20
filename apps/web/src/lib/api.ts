@@ -46,6 +46,8 @@ export async function getJson<T>(url: string): Promise<T> {
     }
     throw new ApiError(res.status, msg);
   }
+  // A static host answers a missing file with the app's index.html; that is a 404, not a parse error.
+  if (!(res.headers.get("content-type") ?? "").includes("json")) throw new ApiError(404, "not found");
   return (await res.json()) as T;
 }
 

@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { NavLink, Outlet, Link } from "react-router-dom";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
-import { addressUrl, deployment, elysiumTestnet } from "@plumbline/shared";
+import { REPO_URL, addressUrl, deployment, elysiumTestnet } from "@plumbline/shared";
 import { STATIC, useCampaigns, useHealth, useKeeper, useMarkets } from "../lib/api";
 import { SnapshotStamp, useNow } from "./Snapshot";
 import { fmtInt, short } from "../lib/format";
@@ -12,20 +13,65 @@ const NAV = [
   { to: "/campaigns", label: "Campaigns", end: false },
   { to: "/maker", label: "Maker", end: false },
   { to: "/economics", label: "Economics", end: false },
+  { to: "/how-it-works", label: "How it works", end: false },
 ] as const;
+
+/** Why connecting did not work, and what to do about it. */
+function WalletHelp({ message, onClose }: { message: string; onClose: () => void }) {
+  return (
+    <div className="absolute right-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-[8px] border-2 border-ink bg-paper p-3 text-left text-xs leading-5 text-ink shadow-brut">
+      <p className="font-semibold">{message}</p>
+      <p className="mt-1.5">
+        Reading this site needs no wallet. To send transactions, use a browser wallet extension (MetaMask, Rabby or similar)
+        with Elysium testnet added: chain ID <span className="num">{elysiumTestnet.id}</span>, RPC{" "}
+        <span className="num break-all">{elysiumTestnet.rpcUrls.default.http[0]}</span>, currency HYPE.
+      </p>
+      <button type="button" className="link mt-2" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  );
+}
 
 export function WalletButton() {
   const { address, chainId, isConnected } = useAccount();
-  const { connect, connectors, isPending } = useConnect();
+  const { connect, connectors, isPending, error, reset } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
+  const [help, setHelp] = useState(false);
 
   if (!isConnected) {
     const injected = connectors[0];
+    const hasProvider = typeof window !== "undefined" && "ethereum" in window && Boolean((window as { ethereum?: unknown }).ethereum);
+    const firstLine = error?.message.split(/\r?\n/)[0] ?? "";
+    const problem = !hasProvider ? "No browser wallet found." : error ? `Could not connect: ${firstLine}` : null;
     return (
-      <Button className="h-9 px-3 text-xs" onClick={() => injected && connect({ connector: injected })} disabled={!injected || isPending}>
-        {isPending ? "Connecting" : "Connect"}
-      </Button>
+      <div className="relative">
+        <Button
+          className="h-9 px-3 text-xs"
+          disabled={isPending}
+          onClick={() => {
+            if (!hasProvider || !injected) {
+              setHelp(true);
+              return;
+            }
+            reset();
+            setHelp(true);
+            connect({ connector: injected });
+          }}
+        >
+          {isPending ? "Connecting" : "Connect"}
+        </Button>
+        {help && problem && (
+          <WalletHelp
+            message={problem}
+            onClose={() => {
+              setHelp(false);
+              reset();
+            }}
+          />
+        )}
+      </div>
     );
   }
   if (chainId !== elysiumTestnet.id) {
@@ -69,12 +115,22 @@ function StatusBar() {
         {quoting} of {vaults} vaults quoting · {running} campaign{running === 1 ? "" : "s"} running
       </span>
       <span className="num hidden shrink-0 sm:inline">chain {deployment.chainId}</span>
-      <span className="ml-auto hidden gap-4 md:flex">
+      <span className="ml-auto flex shrink-0 gap-4">
         {(["factory", "router", "campaigns"] as const).map((c) => (
-          <a key={c} href={addressUrl(deployment.contracts[c])} target="_blank" rel="noreferrer" className="num hover:text-violet">
+          <a
+            key={c}
+            href={addressUrl(deployment.contracts[c])}
+            target="_blank"
+            rel="noreferrer"
+            className="num hidden hover:text-violet md:inline"
+            title={`${c} contract on the Elysium explorer`}
+          >
             {c} {short(deployment.contracts[c], 4)}
           </a>
         ))}
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold underline decoration-1 underline-offset-2 hover:text-violet">
+          GitHub
+        </a>
       </span>
     </footer>
   );

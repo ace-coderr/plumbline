@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { erc20Abi, parseUnits, zeroAddress, type Address } from "viem";
+import { decodeEventLog, erc20Abi, parseUnits, zeroAddress, type Address } from "viem";
 import { useAccount, useReadContract, useReadContracts, useWriteContract } from "wagmi";
+import { waitForTransactionReceipt } from "wagmi/actions";
 import {
+  MEASURED_GAS,
   deployment,
+  elysiumTestnet,
   knownTokens,
   plumbCampaignsAbi,
   plumbQuoteAbi,
@@ -13,10 +16,12 @@ import {
   type CampaignView,
   type TokenRef,
 } from "@plumbline/shared";
-import { useCampaigns, useMaker } from "../lib/api";
-import { ago, fmtAmt, fmtInt, fmtPct, fmtPx, tone, toneText } from "../lib/format";
+import { STATIC, useCampaigns, useMaker, useMarkets } from "../lib/api";
+import { wagmiConfig } from "../lib/wagmi";
+import { ago, fmtAmt, fmtInt, fmtPct, fmtPx, short, tone, toneText } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { TxStatus } from "../components/TxStatus";
+import { GasCost, WriteNotice } from "../components/Write";
 import { WalletButton } from "../components/Layout";
 import {
   AddrLink,
@@ -38,13 +43,72 @@ import {
 
 type Step = { label: string; send: () => Promise<`0x${string}`> };
 
-function DeployVault() {
+const CHAIN = elysiumTestnet.id;
+
+/**
+ * Vaults the wallet owns, read from the factory on-chain. The indexer (or snapshot) lists vaults too,
+ * but a vault deployed after the snapshot exists only here, and the console must still reach it.
+ */
+function useChainVaults(owner: Address | undefined, count: number): Address[] {
+  const n = Math.min(count, 500);
+  const at = useReadContracts({
+    contracts: Array.from({ length: n }, (_, i) => ({
+      address: deployment.contracts.factory,
+      abi: plumbQuoteFactoryAbi,
+      functionName: "vaultAt" as const,
+      args: [BigInt(i)] as const,
+      chainId: CHAIN,
+    })),
+    query: { enabled: Boolean(owner) && n > 0 },
+  });
+  const all = (at.data ?? []).map((r) => r.result as Address | undefined).filter((a): a is Address => Boolean(a));
+  const owners = useReadContracts({
+    contracts: all.map((a) => ({ address: a, abi: plumbQuoteAbi, functionName: "owner" as const, chainId: CHAIN })),
+    query: { enabled: all.length > 0 },
+  });
+  return all.filter((_, i) => String(owners.data?.[i]?.result ?? "").toLowerCase() === owner?.toLowerCase());
+}
+
+function DeployVault({ onCreated }: { onCreated: (vault: Address) => void }) {
   const tokens = knownTokens();
   const { address } = useAccount();
   const { writeContractAsync } = useWriteContract();
   const tx = useTxRunner();
   const [base, setBase] = useState(tokens.find((t) => t.symbol === "WHYPE")?.address ?? "");
-  const [quote, setQuote] = useState(tokens.find((t) => t.symbol === "USDC")?.address ?? "");
+  const [quote, setQuote] = useState(tokens.find((t) => t.symbol === "PLUMBUSD")?.address ?? "");
+  const [created, setCreated] = useState<Address | null>(null);
+
+  async function deploy() {
+    let hash: `0x${string}` | null = null;
+    const ok = await tx.run([
+      {
+        label: "create vault",
+        send: async () => {
+          hash = await writeContractAsync({
+            address: deployment.contracts.factory,
+            abi: plumbQuoteFactoryAbi,
+            functionName: "createVault",
+            args: [base as Address, quote as Address, (quoter || zeroAddress) as Address],
+          });
+          return hash;
+        },
+      },
+    ]);
+    if (!ok || !hash) return;
+    const receipt = await waitForTransactionReceipt(wagmiConfig, { hash });
+    for (const l of receipt.logs) {
+      try {
+        const e = decodeEventLog({ abi: plumbQuoteFactoryAbi, data: l.data, topics: l.topics });
+        if (e.eventName === "VaultCreated") {
+          setCreated(e.args.vault);
+          onCreated(e.args.vault);
+          return;
+        }
+      } catch {
+        // not a factory event
+      }
+    }
+  }
   const [quoter, setQuoter] = useState("");
   const validQuoter = quoter === "" || /^0x[0-9a-fA-F]{40}$/.test(quoter);
 
@@ -73,28 +137,22 @@ function DeployVault() {
           <Input value={quoter} onChange={(e) => setQuoter(e.target.value.trim())} placeholder="0x… (optional)" />
         </Field>
       </div>
-      <Button
-        variant="primary"
-        className="mt-3"
-        disabled={!address || base === quote || !validQuoter || tx.busy}
-        onClick={() =>
-          void tx.run([
-            {
-              label: "create vault",
-              send: () =>
-                writeContractAsync({
-                  address: deployment.contracts.factory,
-                  abi: plumbQuoteFactoryAbi,
-                  functionName: "createVault",
-                  args: [base as Address, quote as Address, (quoter || zeroAddress) as Address],
-                }),
-            },
-          ])
-        }
-      >
-        Deploy vault
-      </Button>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button variant="primary" disabled={!address || base === quote || !validQuoter || tx.busy} onClick={() => void deploy()}>
+          Deploy vault
+        </Button>
+        <GasCost gas={MEASURED_GAS.createVault} label="costs" />
+      </div>
+      <p className="mt-2 text-2xs text-muted">
+        The most expensive action in the protocol: the factory deploys a whole contract. PLUMBUSD can only be minted by the
+        Plumbline deployer, so a new WHYPE/PLUMBUSD vault can fund its ask side with WHYPE but not its bid side.
+      </p>
       <TxStatus state={tx.state} />
+      {created && (
+        <p className="num mt-2 text-xs">
+          Vault <AddrLink address={created} n={6} /> created; it is selected in the console above.
+        </p>
+      )}
     </Panel>
   );
 }
@@ -466,13 +524,40 @@ export function MakerPage() {
   const { address } = useAccount();
   const maker = useMaker(address);
   const campaigns = useCampaigns();
+  const markets = useMarkets();
   const [selected, setSelected] = useState<string>("");
-  const count = useReadContract({ address: deployment.contracts.factory, abi: plumbQuoteFactoryAbi, functionName: "vaultCount" });
+  const count = useReadContract({
+    address: deployment.contracts.factory,
+    abi: plumbQuoteFactoryAbi,
+    functionName: "vaultCount",
+    chainId: CHAIN,
+  });
+  const chainCount = count.data === undefined ? null : Number(count.data);
+  const chainVaults = useChainVaults(address, chainCount ?? 0);
+  const snapshotCount = markets.data ? markets.data.reduce((a, m) => a + m.vaultCount, 0) : null;
+  // The snapshot's count from the frozen data, the live count straight from the factory; "…" until
+  // known, never a zero that only means "not loaded yet".
+  const totalLine = STATIC ? (
+    <>
+      <span className="num">{snapshotCount ?? "…"}</span> vaults on Plumbline at the snapshot
+      {chainCount !== null && snapshotCount !== null && chainCount !== snapshotCount && (
+        <>
+          {" "}
+          · <span className="num">{chainCount}</span> on-chain now
+        </>
+      )}
+    </>
+  ) : (
+    <>
+      <span className="num">{chainCount ?? (count.isError ? "—" : "…")}</span> vaults on Plumbline
+    </>
+  );
 
   if (!address) {
     return (
       <Page density="dense">
-        <PageHeader title="Maker console" sub="Deploy a vault, fund it, quote it, bond it, earn." />
+        <PageHeader title="Maker console" sub={<>Deploy a vault, fund it, quote it, bond it, earn. {totalLine}.</>} />
+        <WriteNotice className="mb-4" />
         <Panel>
           <div className="flex flex-col items-center gap-3 py-10">
             <p className="text-xs text-ink">Connect the wallet that owns (or will own) your vaults.</p>
@@ -484,9 +569,20 @@ export function MakerPage() {
   }
 
   const p = maker.data;
-  const vaults = p?.vaults ?? [];
+  const indexed = p?.vaults ?? [];
+  const known = new Set(indexed.map((v) => v.vault.toLowerCase()));
+  const vaults = [
+    ...indexed.map((v) => ({ vault: v.vault, label: `${v.pair} ${short(v.vault, 4)}` })),
+    ...chainVaults
+      .filter((v) => !known.has(v.toLowerCase()))
+      .map((v) => ({ vault: v, label: `${short(v, 4)}${STATIC ? " (after snapshot)" : ""}` })),
+  ];
   const active = (selected || vaults[0]?.vault || "") as Address;
   const cs = campaigns.data ?? [];
+  // Frozen data: pass rate over every scored check, not a 24h window measured from export time.
+  const checks = p?.scores.reduce((a, s) => a + s.checks, 0) ?? 0;
+  const points = p?.scores.reduce((a, s) => a + s.points, 0) ?? 0;
+  const passRate = checks ? points / checks : null;
 
   return (
     <Page density="dense">
@@ -494,20 +590,33 @@ export function MakerPage() {
         title="Maker console"
         sub={
           <>
-            <span className="num">{vaults.length}</span> vault{vaults.length === 1 ? "" : "s"} for this wallet ·{" "}
-            <span className="num">{fmtInt(Number(count.data ?? 0n))}</span> vaults on Plumbline
+            <span className="num">{vaults.length}</span> vault{vaults.length === 1 ? "" : "s"} for this wallet · {totalLine}
           </>
         }
       />
+      <WriteNotice className="mb-4" />
       <StatRow>
-        <Stat label="Uptime 24h" value={fmtPct(p?.uptime24h)} tone={tone(p?.uptime24h)} />
+        {STATIC ? (
+          <Stat
+            label="Pass rate"
+            value={fmtPct(passRate)}
+            tone={tone(passRate)}
+            sub={checks ? `${fmtInt(points)} of ${fmtInt(checks)} checks` : "no probes scored"}
+          />
+        ) : (
+          <Stat label="Uptime 24h" value={fmtPct(p?.uptime24h)} tone={tone(p?.uptime24h)} />
+        )}
         <Stat label="Vaults" value={vaults.length} />
         <Stat label="Bonds" value={p?.registrations.filter((r) => r.status !== "released").length ?? 0} />
         <Stat
           label="Earned"
           value={p?.totalEarned.length ? p.totalEarned.map((e) => `${fmtAmt(e.amount, e.decimals, 3)} ${e.symbol}`).join(" · ") : "—"}
         />
-        <Stat label="Quote updates 24h" value={fmtInt(vaults.reduce((a, v) => a + v.quoteUpdates24h, 0))} />
+        <Stat
+          label={STATIC ? "Quote updates" : "Quote updates 24h"}
+          value={fmtInt(indexed.reduce((a, v) => a + v.quoteUpdates24h, 0))}
+          sub={STATIC ? "in the 24h before the snapshot" : undefined}
+        />
         <Stat label="Epochs scored" value={p?.scores.length ?? 0} />
       </StatRow>
 
@@ -521,7 +630,7 @@ export function MakerPage() {
                   <Select value={active} onChange={(e) => setSelected(e.target.value)} className="h-6 w-56">
                     {vaults.map((v) => (
                       <option key={v.vault} value={v.vault}>
-                        {v.pair} {v.vault.slice(0, 10)}…
+                        {v.label}
                       </option>
                     ))}
                   </Select>
@@ -531,7 +640,7 @@ export function MakerPage() {
               <VaultConsole key={active} vault={active} campaigns={cs} />
             </Panel>
           )}
-          <DeployVault />
+          <DeployVault onCreated={(v) => setSelected(v)} />
           <Panel title="Scores by epoch" pad={false}>
             {!p?.scores.length ? (
               <Empty>No probes have scored your vaults yet.</Empty>

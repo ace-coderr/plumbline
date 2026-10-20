@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { addressUrl, deployment, SNAPSHOT_WINDOW, type DepthReport } from "@plumbline/shared";
-import { STATIC, useCampaign, useReport, useReportProbes } from "../lib/api";
+import { DEPLOYED_SOURCE_TAG, REPO_URL, addressUrl, deployedSourceUrl, deployment, SNAPSHOT_WINDOW, type DepthReport } from "@plumbline/shared";
+import { STATIC, useCampaign, useMarkets, useReport, useReportProbes } from "../lib/api";
+import { LoadFailed, Missing } from "../components/Missing";
 import { dateTime, duration, fmtAmt, fmtInt, fmtPct, short, tone, toneText, utcWindow } from "../lib/format";
 import { EpochGrid } from "../components/charts";
 import { Wordmark } from "../components/Brand";
@@ -107,6 +108,9 @@ export function ReportPage() {
   const [copied, setCopied] = useState(false);
   const report = useReport(token, STATIC ? SNAPSHOT_WINDOW : win);
   const probes = useReportProbes(token, page * PAGE, PAGE);
+  const markets = useMarkets();
+  // Reports exist per base token, for tokens with at least one probed market.
+  const reportTokens = [...new Set((markets.data ?? []).filter((m) => m.verified.probes > 0).map((m) => m.base.symbol))];
 
   if (report.isLoading) {
     return (
@@ -118,7 +122,26 @@ export function ReportPage() {
   if (report.isError || !report.data) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-12">
-        <ErrorNote error={report.error ?? "no report"} />
+        <Link to="/" aria-label="Plumbline">
+          <Wordmark size={22} />
+        </Link>
+        <LoadFailed
+          error={report.error ?? "no report"}
+          missing={
+            <Missing
+              title={`No depth report for ${token.toUpperCase()}`}
+              links={[...reportTokens.map((t) => ({ to: `/report/${t}`, label: `${t} report` })), { to: "/", label: "All markets" }]}
+            >
+              <p>
+                A report covers one base token and needs at least one probed market.{" "}
+                {reportTokens.length ? `Reports exist for: ${reportTokens.join(", ")}.` : ""}
+              </p>
+            </Missing>
+          }
+        />
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="link text-xs">
+          GitHub
+        </a>
       </div>
     );
   }
@@ -295,6 +318,30 @@ export function ReportPage() {
               </div>
             </section>
 
+            <section className="mt-10 border-t-2 border-ink pt-5">
+              <h2 className="font-display text-xl font-extrabold tracking-display">Verify this yourself</h2>
+              <p className="mt-2 text-sm leading-6">
+                Every probe in the log is a transaction to the campaigns contract{" "}
+                <a href={addressUrl(r.contracts.campaigns)} target="_blank" rel="noreferrer" className="num link">
+                  {short(r.contracts.campaigns, 6)}
+                </a>{" "}
+                on the Elysium explorer; open one and read its <span className="num">ProbeResult</span> events, one per
+                vault checked. The contract source verified on the explorer is tag{" "}
+                <a href={deployedSourceUrl()} target="_blank" rel="noreferrer" className="num link">
+                  {DEPLOYED_SOURCE_TAG}
+                </a>{" "}
+                of the{" "}
+                <a href={REPO_URL} target="_blank" rel="noreferrer" className="link">
+                  Plumbline repository
+                </a>
+                , and{" "}
+                <Link to="/how-it-works" className="link">
+                  how it works
+                </Link>{" "}
+                explains what each figure counts.
+              </p>
+            </section>
+
             {demo && (
               <p className="mt-8 border-t-2 border-ink pt-4 text-xs leading-5 text-muted">
                 {r.quote.symbol} is a mintable demo token standing in for USDC, which is not faucet-available on Elysium
@@ -312,6 +359,9 @@ export function ReportPage() {
             </a>
           ))}
           <span className="num">generated {dateTime(r.generatedAt)}</span>
+          <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold text-ink underline decoration-1 underline-offset-2 hover:text-violet">
+            GitHub
+          </a>
         </footer>
       </div>
     </Page>

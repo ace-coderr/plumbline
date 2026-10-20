@@ -38,7 +38,8 @@ export function useTxRunner() {
         return false;
       }
     }
-    await qc.invalidateQueries();
+    // Live data picks the change up; a snapshot never will, so there is nothing to refetch.
+    if (import.meta.env.VITE_DATA_MODE !== "static") await qc.invalidateQueries();
     return true;
   }
 

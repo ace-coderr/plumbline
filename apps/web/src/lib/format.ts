@@ -50,13 +50,11 @@ export function fmtNum(x: number | null | undefined, digits = 2): string {
   return x.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-/** Very small or very large numbers in a readable fixed or scientific form. */
-export function fmtSci(x: number | null | undefined, digits = 3): string {
+/** Plain decimal with `digits` significant figures; never scientific notation (0.000488, not 4.88e-4). */
+export function fmtDec(x: number | null | undefined, digits = 3): string {
   if (x === null || x === undefined || !Number.isFinite(x)) return "—";
   if (x === 0) return "0";
-  const a = Math.abs(x);
-  if (a >= 0.001 && a < 1e9) return x.toLocaleString("en-US", { maximumSignificantDigits: digits + 1 });
-  return x.toExponential(digits);
+  return x.toLocaleString("en-US", { maximumSignificantDigits: digits, maximumFractionDigits: 20 });
 }
 
 export function short(addr: string | null | undefined, n = 4): string {
@@ -64,8 +62,14 @@ export function short(addr: string | null | undefined, n = 4): string {
   return `${addr.slice(0, 2 + n)}…${addr.slice(-n)}`;
 }
 
-export function ago(ts: number | null | undefined, nowSec = Math.floor(Date.now() / 1000)): string {
+/**
+ * "5m ago". Against frozen data a time relative to the visitor's clock keeps growing, so in static
+ * mode, unless a reference time is passed, it is the absolute UTC time instead.
+ */
+export function ago(ts: number | null | undefined, nowSec?: number): string {
   if (!ts) return "—";
+  if (nowSec === undefined && import.meta.env.VITE_DATA_MODE === "static") return utcTime(ts);
+  nowSec ??= Math.floor(Date.now() / 1000);
   const d = Math.max(0, nowSec - ts);
   if (d < 60) return `${d}s ago`;
   if (d < 3600) return `${Math.floor(d / 60)}m ago`;
@@ -115,7 +119,7 @@ export function fmtUsd(x: number | null | undefined): string {
   if (x === null || x === undefined || !Number.isFinite(x)) return "—";
   if (x === 0) return "$0";
   if (Math.abs(x) >= 0.01) return `$${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return `$${x.toPrecision(2)}`;
+  return `$${fmtDec(x, 2)}`;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

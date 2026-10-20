@@ -8,6 +8,7 @@ import { NewCampaignPage } from "./pages/NewCampaign";
 import { CampaignPage } from "./pages/Campaign";
 import { ReportPage } from "./pages/Report";
 import { EconomicsPage } from "./pages/Economics";
+import { HowItWorksPage } from "./pages/HowItWorks";
 import { NotFound } from "./pages/NotFound";
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
         <Route path="/campaigns/new" element={<NewCampaignPage />} />
         <Route path="/campaign/:id" element={<CampaignPage />} />
         <Route path="/economics" element={<EconomicsPage />} />
+        <Route path="/how-it-works" element={<HowItWorksPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route element={<BareLayout />}>

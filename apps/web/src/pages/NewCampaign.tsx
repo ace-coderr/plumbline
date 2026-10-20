@@ -3,15 +3,19 @@ import { useNavigate } from "react-router-dom";
 import { decodeEventLog, erc20Abi, parseUnits, zeroAddress, type Address } from "viem";
 import { useAccount, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { deployment, knownTokens, plumbCampaignsAbi } from "@plumbline/shared";
+import { MEASURED_GAS, deployment, knownTokens, plumbCampaignsAbi } from "@plumbline/shared";
 import { wagmiConfig } from "../lib/wagmi";
 import { useTxRunner } from "../lib/tx";
-import { duration } from "../lib/format";
+import { STATIC } from "../lib/api";
+import { duration, fmtDec } from "../lib/format";
 import { TxStatus } from "../components/TxStatus";
-import { Button, Field, Input, PageHeader, Panel, Select, Page } from "../components/ui";
+import { GasCost, WriteNotice, gasHype } from "../components/Write";
+import { Button, Field, Input, PageHeader, Panel, Select, Page, TxLink } from "../components/ui";
 
 const MAX_PROBE_SHARE_BPS = 5_000;
 const GATE_ODDS = 64;
+/** Measured L2 block time on Elysium; the gate's mean wait is GATE_ODDS of these. */
+const BLOCK_MS = 139;
 
 interface Form {
   base: string;
@@ -34,19 +38,22 @@ export function NewCampaignPage() {
   const { address } = useAccount();
   const { writeContractAsync } = useWriteContract();
   const tx = useTxRunner();
+  const [opened, setOpened] = useState<{ id: string; hash: `0x${string}` } | null>(null);
+  // Defaults a testnet-faucet wallet can afford (a faucet drip is about 0.1 HYPE): a one-hour
+  // campaign paying 0.012 HYPE in total, on the market the demo makers quote, at their size.
   const [f, setF] = useState<Form>({
     base: tokens.find((t) => t.symbol === "WHYPE")?.address ?? tokens[0]?.address ?? "",
-    quote: tokens.find((t) => t.symbol === "USDC")?.address ?? tokens[1]?.address ?? "",
+    quote: tokens.find((t) => t.symbol === "PLUMBUSD")?.address ?? tokens[1]?.address ?? "",
     rewardToken: zeroAddress,
-    rewardPerEpoch: "1",
-    numEpochs: "24",
-    epochLength: "3600",
+    rewardPerEpoch: "0.001",
+    numEpochs: "12",
+    epochLength: "300",
     maxSpreadBps: "30",
-    minDepthBase: "1",
-    minDepthQuote: "40",
-    minProbeInterval: "20",
+    minDepthBase: "0.0005",
+    minDepthQuote: "0.02",
+    minProbeInterval: "13",
     probeFeeBps: "10",
-    makerBond: "0.5",
+    makerBond: "0.001",
   });
   const set = (k: keyof Form) => (e: { target: { value: string } }) => setF((s) => ({ ...s, [k]: e.target.value }));
 
@@ -59,8 +66,8 @@ export function NewCampaignPage() {
     const interval = Number(f.minProbeInterval);
     const feeBps = Number(f.probeFeeBps);
     const maxProbes = interval > 0 ? Math.floor(epochLength / interval) : 0;
-    // Expected cadence: the interval plus a geometric wait of GATE_ODDS blocks at ~120ms.
-    const expectedGap = interval + (GATE_ODDS * 120) / 1000;
+    // Expected cadence: the interval plus a geometric wait of GATE_ODDS blocks.
+    const expectedGap = interval + (GATE_ODDS * BLOCK_MS) / 1000;
     const expectedProbes = expectedGap > 0 ? Math.floor(epochLength / expectedGap) : 0;
     const errors: string[] = [];
     if (!base || !quote || base.address === quote.address) errors.push("pick two different tokens");
@@ -128,12 +135,15 @@ export function NewCampaignPage() {
     });
     const ok = await tx.run(steps);
     if (ok && openHash) {
-      const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: openHash });
+      const hash: `0x${string}` = openHash;
+      const receipt = await waitForTransactionReceipt(wagmiConfig, { hash });
       for (const l of receipt.logs) {
         try {
           const e = decodeEventLog({ abi: plumbCampaignsAbi, data: l.data, topics: l.topics });
           if (e.eventName === "CampaignOpened") {
-            nav(`/campaign/${e.args.id.toString()}`);
+            // A snapshot has no page for a campaign opened after it; say what happened instead.
+            if (STATIC) setOpened({ id: e.args.id.toString(), hash });
+            else nav(`/campaign/${e.args.id.toString()}`);
             return;
           }
         } catch {
@@ -156,6 +166,7 @@ export function NewCampaignPage() {
         }
         sub="Set the bar a quote has to clear, fund the pot, and let permissionless probes decide who earns it. Makers who advertise size they cannot pay lose part of their bond."
       />
+      <WriteNotice className="mb-6" />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px] [&>*]:min-w-0">
         <Panel title="Terms">
           <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
@@ -219,7 +230,7 @@ export function NewCampaignPage() {
         <Panel title="Summary">
           <dl className="space-y-2.5 text-sm">
             {[
-              ["Funding now", `${f.rewardPerEpoch && f.numEpochs ? (Number(f.rewardPerEpoch) * Number(f.numEpochs)).toLocaleString() : "—"} ${reward?.symbol ?? ""}`],
+              ["Funding now", `${f.rewardPerEpoch && f.numEpochs ? fmtDec(Number(f.rewardPerEpoch) * Number(f.numEpochs), 4) : "—"} ${reward?.symbol ?? ""}`],
               ["Duration", duration((Number(f.epochLength) || 0) * (Number(f.numEpochs) || 0))],
               ["Probes / epoch, max", String(derived.maxProbes)],
               ["Probes / epoch, expected", `~${derived.expectedProbes}`],
@@ -239,15 +250,45 @@ export function NewCampaignPage() {
               ))}
             </ul>
           )}
+          <div className="mt-4 rounded-[8px] border-2 border-ink bg-bg px-3 py-2.5 text-sm">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="font-semibold">You pay now</span>
+              <span className="num font-bold">
+                {fmtDec(Number(f.rewardPerEpoch) * Number(f.numEpochs) || 0, 4)} {reward?.symbol}
+              </span>
+            </div>
+            <div className="num mt-0.5 text-xs text-muted">
+              {f.rewardPerEpoch || "0"} × {f.numEpochs || "0"} epochs
+              {reward?.address !== zeroAddress ? " + approve" : ""} · network fee ≈{" "}
+              {fmtDec(gasHype(MEASURED_GAS.openCampaign + (reward?.address !== zeroAddress ? MEASURED_GAS.approve : 0)), 2)} HYPE
+            </div>
+            <div className="num mt-1.5 text-xs">
+              Each maker that joins posts a {f.makerBond || "0"} {reward?.symbol} bond (theirs, not yours; returned on unbond).
+            </div>
+          </div>
           <Button
             variant="primary"
-            className="mt-4 w-full"
+            className="mt-3 w-full"
             disabled={!address || derived.errors.length > 0 || tx.busy}
             onClick={() => void submit()}
           >
-            {address ? "Fund and open" : "Connect a wallet"}
+            {address ? `Fund ${fmtDec(Number(f.rewardPerEpoch) * Number(f.numEpochs) || 0, 4)} ${reward?.symbol ?? ""} and open` : "Connect a wallet"}
           </Button>
+          <div className="mt-1.5">
+            <GasCost gas={MEASURED_GAS.openCampaign} />
+          </div>
           <TxStatus state={tx.state} />
+          {opened && (
+            <div className="mt-3 rounded-[8px] border-2 border-ink bg-highlight px-3 py-2.5 text-sm leading-6">
+              <div className="font-bold">
+                Campaign <span className="num">#{opened.id}</span> is open on-chain.
+              </div>
+              <p>
+                Opened in <TxLink hash={opened.hash} />. Makers can bond into it and anyone can probe it now. This site shows a
+                snapshot taken before it existed, so it has no page for it until the snapshot is refreshed.
+              </p>
+            </div>
+          )}
         </Panel>
       </div>
     </Page>

@@ -1,3 +1,7 @@
+**Live site: [plumbline-acedevv.vercel.app](https://plumbline-acedevv.vercel.app)** · a frozen snapshot of the testnet
+run, with wallet actions that send real transactions ([what that means](#public-site-a-static-snapshot)) ·
+[how it works](https://plumbline-acedevv.vercel.app/how-it-works)
+
 <p align="center">
   <img src="apps/web/public/og-default.png" alt="plumbline" width="640" />
 </p>
@@ -282,6 +286,12 @@ pnpm --filter @plumbline/web build:static           # vite build --mode static +
 * Rolling windows (24h, 7d) measured back from export time would all hold the same probes, so frozen
   pages show one window, labelled: the campaign window, from the first campaign's start to the last
   one's end. The live build keeps the window toggles.
+* The write path stays live: opening a campaign, deploying and funding a vault, bonding, settling and
+  swapping all send real transactions to the deployed contracts. Every page with a write action says,
+  above it, that the transaction will land on-chain but not appear on the site until the snapshot is
+  refreshed, and a confirmed transaction is reported with its explorer link rather than by waiting for
+  data. Defaults on `/campaigns/new` fit a testnet-faucet wallet (0.012 HYPE in total), and each
+  action shows its network fee from the measured gas table below.
 * Every page that shows data carries the snapshot's block height (linked to the explorer) and UTC
   time, and the keeper reads "not running". Every probe, settlement and the slash still links to its
   transaction on the Elysium explorer, so the snapshot can be checked without us.
@@ -333,8 +343,9 @@ the same pages from the snapshot; step 3 needs the live stack):
 5. **45–55s · Report** (`/report/WHYPE`): the shareable certificate. Verified uptime in very large
    type, the campaign terms in plain sentences, inventory-backed depth, coverage per epoch, and every probe
    linked to its transaction. Shared links unfurl with the number on the card.
-6. **55–60s · Economics** (`/economics`): probes and quote updates measured from receipts next to the
-   same cadence on a one-second chain.
+6. **55–60s · Economics** (`/economics`): why a 2-second quote needs ~140 ms blocks (15 chances to
+   re-stamp it, against 2 on a one-second chain), then gas measured from receipts next to the same
+   cadence on that chain, in gas units, native tokens and, labelled as price-dependent, dollars.
 
 `pnpm demo swap 0.02` sends an ordinary taker trade through the router.
 

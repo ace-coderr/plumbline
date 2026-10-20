@@ -85,7 +85,7 @@ export function CampaignsPage() {
                       {fmtInt(c.totalProbes)}
                     </Td>
                     <Td mono className="text-muted">
-                      {ago(c.lastProbeAt, now)}
+                      {ago(c.lastProbeAt)}
                     </Td>
                   </tr>
                 );

@@ -1,4 +1,5 @@
 import type { TxState } from "../lib/tx";
+import { STATIC } from "../lib/api";
 import { TxLink } from "./ui";
 
 export function TxStatus({ state }: { state: TxState }) {
@@ -14,7 +15,12 @@ export function TxStatus({ state }: { state: TxState }) {
       )}
       {state.status === "done" && (
         <>
-          {state.label} confirmed <TxLink hash={state.hash} />
+          {state.label} confirmed on-chain <TxLink hash={state.hash} />
+          {STATIC && (
+            <span className="mt-1 block font-sans text-ink">
+              This page shows a snapshot and will not update. Open the transaction on the explorer to see the result.
+            </span>
+          )}
         </>
       )}
       {state.status === "error" && (

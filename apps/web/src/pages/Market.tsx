@@ -7,7 +7,9 @@ import {
   deployment,
   plumbRouterAbi,
   quoteNotional,
+  MEASURED_GAS,
   SNAPSHOT_WINDOW,
+  elysiumTestnet,
   type MarketSummary,
   type QuoteView,
 } from "@plumbline/shared";
@@ -15,6 +17,8 @@ import { STATIC, useMarket, useUptime } from "../lib/api";
 import { ago, clock, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, px, tone, toneText, utcTime, utcWindow } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { ChartLegend, PROBE_STRIP_LEGEND, ProbeStrip, UptimeChart } from "../components/charts";
+import { GasCost, WriteNotice } from "../components/Write";
+import { LoadFailed, Missing } from "../components/Missing";
 import { TxStatus } from "../components/TxStatus";
 import {
   AddrLink,
@@ -60,11 +64,30 @@ function Ladder({ book, m }: { book: QuoteView[]; m: MarketSummary }) {
           <Th right>Backed</Th>
           <Th right>Spread</Th>
           <Th right>Age</Th>
-          <Th right>Uptime 24h</Th>
+          <Th right>{STATIC ? "Uptime" : "Uptime 24h"}</Th>
         </tr>
       </thead>
       <tbody>
         {book.map((q) => {
+          // A vault that has never posted a quote has nothing to back: show that, not zeros.
+          if (!q.updatedAt || BigInt(q.askPx) === 0n) {
+            return (
+              <tr key={q.vault} className="opacity-60">
+                <Td>
+                  <span className="flex items-center gap-2">
+                    <AddrLink address={q.vault} />
+                    <Badge tone="none">no quote</Badge>
+                  </span>
+                </Td>
+                <Td mono className="text-muted" colSpan={9}>
+                  never quoted ·{" "}
+                  {BigInt(q.freeBase) === 0n && BigInt(q.freeQuote) === 0n
+                    ? "holds no tokens"
+                    : `holds ${fmtAmt(q.freeBase, m.base.decimals, 4)} ${m.base.symbol} and ${fmtAmt(q.freeQuote, m.quote.decimals, 2)} ${m.quote.symbol}`}
+                </Td>
+              </tr>
+            );
+          }
           const bidNotional = quoteNotional(BigInt(q.bidSize), BigInt(q.bidPx), m.base.decimals, m.quote.decimals);
           const bidBacked = BigInt(q.freeQuote) >= bidNotional;
           const askBacked = BigInt(q.freeBase) >= BigInt(q.askSize);
@@ -132,6 +155,7 @@ function SwapPanel({ m }: { m: MarketSummary }) {
     abi: plumbRouterAbi,
     functionName: "previewSwap",
     args: [m.base.address, m.quote.address, buying, amountIn],
+    chainId: elysiumTestnet.id,
     query: { enabled: amountIn > 0n, refetchInterval: 1_000 },
   });
   const allowance = useReadContract({
@@ -139,6 +163,7 @@ function SwapPanel({ m }: { m: MarketSummary }) {
     abi: erc20Abi,
     functionName: "allowance",
     args: [address ?? "0x0000000000000000000000000000000000000000", deployment.contracts.router],
+    chainId: elysiumTestnet.id,
     query: { enabled: Boolean(address) },
   });
   const [out, filled] = preview.data ?? [0n, 0n];
@@ -175,6 +200,7 @@ function SwapPanel({ m }: { m: MarketSummary }) {
   return (
     <Panel title="Take liquidity" right={<span>via PlumbRouter</span>}>
       <div className="space-y-3">
+        <WriteNotice compact />
         <Segmented value={side} options={["buy", "sell"] as const} onChange={setSide} />
         <Field label={`Pay (${tokenIn.symbol})`}>
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" suffix={tokenIn.symbol} />
@@ -205,6 +231,7 @@ function SwapPanel({ m }: { m: MarketSummary }) {
         >
           {!address ? "Connect a wallet to trade" : filled < amountIn ? "Not enough live depth" : `${side} ${m.base.symbol}`}
         </Button>
+        <GasCost gas={MEASURED_GAS.swap} />
         <TxStatus state={tx.state} />
         <p className="text-xs leading-5 text-muted">
           If a vault quotes size it cannot back, its fill reverts, the router verifies the shortfall on-chain, and the
@@ -222,7 +249,18 @@ export function MarketPage() {
   const uptime = useUptime(pair, STATIC ? SNAPSHOT_WINDOW : win);
 
   if (market.isLoading) return <Loading rows={6} />;
-  if (market.isError || !market.data) return <ErrorNote error={market.error ?? "unknown market"} />;
+  if (market.isError || !market.data) {
+    return (
+      <LoadFailed
+        error={market.error ?? "unknown market"}
+        missing={
+          <Missing title={`No market ${pair.replace("-", "/")}${STATIC ? " in this snapshot" : ""}`} links={[{ to: "/", label: "All markets" }]}>
+            <p>Markets are named BASE-QUOTE, for example WHYPE-PLUMBUSD.</p>
+          </Missing>
+        }
+      />
+    );
+  }
   const { summary: m, book, fills, failedFills } = market.data;
   const mid =
     m.bestBidPx && m.bestAskPx ? ((px(m.bestBidPx) ?? 0) + (px(m.bestAskPx) ?? 0)) / 2 : null;
@@ -242,14 +280,21 @@ export function MarketPage() {
         }
         sub={
           <span className="num">
-            {m.vaultCount} vaults · {m.makerCount} makers · sampled {ago(m.sampledAt)}
+            {m.vaultCount} vault{m.vaultCount === 1 ? "" : "s"} · {m.makerCount} maker{m.makerCount === 1 ? "" : "s"} · sampled{" "}
+            {ago(m.sampledAt)}
           </span>
         }
         right={
           <div className="flex flex-wrap gap-2">
-            <Link to={`/report/${m.base.symbol}`}>
-              <Button variant="primary">Depth report</Button>
-            </Link>
+            {m.verified.probes > 0 ? (
+              <Link to={`/report/${m.base.symbol}`}>
+                <Button variant="primary">Depth report</Button>
+              </Link>
+            ) : (
+              <Button disabled title="A report needs probes, and this market has none">
+                No probes, no report
+              </Button>
+            )}
             {m.campaignIds.map((id) => (
               <Link key={id} to={`/campaign/${id}`}>
                 <Button>
@@ -263,7 +308,7 @@ export function MarketPage() {
       {STATIC ? (
         // Frozen data: figures probes verified, over the market's whole probe window.
         <StatRow>
-          <Stat label="Uptime" value={fmtPct(v.uptime, 2)} tone={tone(v.uptime)} sub={utcWindow(v.from, v.to)} />
+          <Stat label="Uptime" value={fmtPct(v.uptime, 2)} tone={tone(v.uptime)} sub={v.probes ? utcWindow(v.from, v.to) : "no probes"} />
           <Stat label="Probes" value={fmtInt(v.probes)} sub={`last ${ago(m.lastProbeAt)}`} />
           <Stat
             label="Median spread"

@@ -1,12 +1,14 @@
 import { Link, useParams } from "react-router-dom";
 import { useAccount, useWriteContract } from "wagmi";
-import { deployment, failLabels, plumbCampaignsAbi } from "@plumbline/shared";
-import { useCampaign } from "../lib/api";
+import { MEASURED_GAS, deployment, failLabels, plumbCampaignsAbi } from "@plumbline/shared";
+import { STATIC, useCampaign } from "../lib/api";
 import { useNow } from "../components/Snapshot";
 import { ago, clock, dateTime, duration, fmtAmt, fmtInt, fmtPct, tone, toneText } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { ChartLegend, PROBE_STRIP_LEGEND, ProbeStrip } from "../components/charts";
 import { TxStatus } from "../components/TxStatus";
+import { LoadFailed, Missing } from "../components/Missing";
+import { GasCost, WriteNotice } from "../components/Write";
 import {
   AddrLink,
   Badge,
@@ -37,7 +39,18 @@ export function CampaignPage() {
   const now = useNow();
 
   if (q.isLoading) return <Loading rows={6} />;
-  if (q.isError || !q.data) return <ErrorNote error={q.error ?? "unknown campaign"} />;
+  if (q.isError || !q.data) {
+    return (
+      <LoadFailed
+        error={q.error ?? "unknown campaign"}
+        missing={
+          <Missing title={`No campaign #${idParam}${STATIC ? " in this snapshot" : ""}`} links={[{ to: "/campaigns", label: "All campaigns" }]}>
+            <p>Campaigns are numbered from 1 in the order they were opened.</p>
+          </Missing>
+        }
+      />
+    );
+  }
   const { campaign: c, leaderboard, epochs, recentProbes, penalties } = q.data;
   const end = c.startTime + c.numEpochs * c.epochLength;
   const settleable = epochs.filter((e) => !e.settled && e.end <= now);
@@ -74,7 +87,7 @@ export function CampaignPage() {
         sub={
           <>
             Sponsored by <AddrLink address={c.creator} /> · opened <TxLink hash={c.openedTx} /> ·{" "}
-            {now < end ? `ends ${dateTime(end)}` : `ended ${ago(end, now)}`}
+            {now < end ? `ends ${dateTime(end)}` : `ended ${ago(end)}`}
           </>
         }
         right={
@@ -89,6 +102,12 @@ export function CampaignPage() {
         }
       />
       <TxStatus state={tx.state} />
+      {settleable.length > 0 && (
+        <div className="-mt-2 mb-4">
+          <GasCost gas={MEASURED_GAS.settle} label="settling costs" />
+        </div>
+      )}
+      <WriteNotice className="mb-4" />
 
       <StatRow>
         <Stat label="Reward / epoch" value={`${reward(c.rewardPerEpoch, 3)} ${c.rewardSymbol}`} sub={`${c.numEpochs} × ${duration(c.epochLength)}`} />
@@ -97,7 +116,7 @@ export function CampaignPage() {
           value={`${Math.min(c.currentEpoch, c.numEpochs)} / ${c.numEpochs}`}
           sub={currentEpoch && now < end ? `ends in ${duration(Math.max(0, currentEpoch.end - now))}` : `${c.settledEpochs} settled`}
         />
-        <Stat label="Probes" value={fmtInt(c.totalProbes)} sub={`last ${ago(c.lastProbeAt, now)}`} />
+        <Stat label="Probes" value={fmtInt(c.totalProbes)} sub={`last ${ago(c.lastProbeAt)}`} />
         <Stat label="Paid to makers" value={`${fmtAmt(totalPaid, c.rewardDecimals, 3)} ${c.rewardSymbol}`} />
         <Stat label="Targets" value={`${c.maxSpreadBps} bps`} sub={`≥ ${fmtAmt(c.minDepthBase, c.base.decimals, 2)} ${c.base.symbol} · ≥ ${fmtAmt(c.minDepthQuote, c.quote.decimals, 0)} ${c.quote.symbol}`} />
         <Stat label="Maker bond" value={`${reward(c.makerBond, 3)} ${c.rewardSymbol}`} sub={`probe fee ${c.probeFeeBps} bps · every ≥${c.minProbeInterval}s`} />

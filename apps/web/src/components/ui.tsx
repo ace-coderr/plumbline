@@ -167,15 +167,18 @@ export function Td({
   right = false,
   mono = false,
   className,
+  colSpan,
 }: {
   children?: ReactNode;
   right?: boolean;
   mono?: boolean;
   className?: string;
+  colSpan?: number;
 }) {
   const d = useDensity();
   return (
     <td
+      colSpan={colSpan}
       className={cx(
         "whitespace-nowrap border-b border-dotted border-ink",
         d === "dense" ? "h-7 px-3 text-xs" : "h-12 px-5 text-sm",

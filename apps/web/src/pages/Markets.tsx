@@ -87,7 +87,7 @@ function MarketCard({ m, now }: { m: MarketSummary; now: number }) {
           [COLS.spread.toLowerCase(), f.spread === null ? "—" : `${f.spread} bps`],
           ["probes", fmtInt(f.probes)],
           ["makers", String(m.makerCount)],
-          ["last probe", ago(m.lastProbeAt, now)],
+          ["last probe", ago(m.lastProbeAt)],
         ].map(([k, v]) => (
           <div key={k}>
             <dt className="label">{k}</dt>
@@ -96,9 +96,15 @@ function MarketCard({ m, now }: { m: MarketSummary; now: number }) {
         ))}
       </dl>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Link to={`/report/${m.base.symbol}`}>
-          <Badge tone="violet">report</Badge>
-        </Link>
+        {m.verified.probes > 0 ? (
+          <Link to={`/report/${m.base.symbol}`}>
+            <Badge tone="violet">report</Badge>
+          </Link>
+        ) : (
+          <span title="A report needs probes, and this market has none">
+            <Badge tone="none">no report</Badge>
+          </span>
+        )}
         {m.campaignIds.map((id) => (
           <Link key={id} to={`/campaign/${id}`}>
             <Badge tone="none">
@@ -236,13 +242,19 @@ export function MarketsPage() {
                         {m.makerCount}
                       </Td>
                       <Td mono className="text-muted">
-                        {ago(m.lastProbeAt, now)}
+                        {ago(m.lastProbeAt)}
                       </Td>
                       <Td>
                         <div className="flex gap-1.5">
-                          <Link to={`/report/${m.base.symbol}`}>
-                            <Badge tone="violet">report</Badge>
-                          </Link>
+                          {m.verified.probes > 0 ? (
+                            <Link to={`/report/${m.base.symbol}`}>
+                              <Badge tone="violet">report</Badge>
+                            </Link>
+                          ) : (
+                            <span title="A report needs probes, and this market has none">
+                              <Badge tone="none">no report</Badge>
+                            </span>
+                          )}
                           {m.campaignIds.slice(0, 3).map((id) => (
                             <Link key={id} to={`/campaign/${id}`}>
                               <Badge tone="none">

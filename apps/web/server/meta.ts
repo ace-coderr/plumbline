@@ -27,7 +27,7 @@ export function cardFromReport(r: DepthReport): CardData {
     uptime: r.verifiedUptime === null ? "—" : `${(r.verifiedUptime * 100).toFixed(2)}%`,
     spread: r.medianSpreadBps === null ? "—" : `${r.medianSpreadBps.toFixed(1)} bps`,
     // Small depths keep significant digits instead of rounding to zero.
-    depth: `${depth >= 1 ? Math.round(depth).toLocaleString("en-US") : depth.toPrecision(2)} ${r.quote.symbol}`,
+    depth: `${depth >= 1 ? Math.round(depth).toLocaleString("en-US") : depth.toLocaleString("en-US", { maximumSignificantDigits: 2, maximumFractionDigits: 20 })} ${r.quote.symbol}`,
     probes: r.probes.toLocaleString("en-US"),
     makers: String(r.makers),
     footnote: `Every probe is an Elysium transaction. Campaigns ${r.campaigns.map((c) => `#${c}`).join(" ") || "—"}.`,
