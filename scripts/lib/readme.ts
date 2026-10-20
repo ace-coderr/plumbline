@@ -8,7 +8,15 @@ import { ROOT } from "./env.js";
 import type { DeploymentRecord } from "./addresses.js";
 
 const EXPLORER = "https://elysium.kinetiq.xyz/testnet-explorer";
+const REPO = "https://github.com/ace-coderr/plumbline";
 const link = (a: string) => `[\`${a}\`](${EXPLORER}/address/${a})`;
+
+/**
+ * Git tag marking the source a deployment was built and verified from: `deployed-<chainId>-<UTC date>`.
+ * Tag the deployed commit with this name and push it, so the explorer's verified source can be checked
+ * against an exact commit after `main` moves on.
+ */
+export const sourceTag = (d: DeploymentRecord): string => `deployed-${d.chainId}-${d.deployedAt.slice(0, 10)}`;
 
 interface SeedCheckpoint {
   vaultA?: string;
@@ -35,9 +43,11 @@ export function updateReadme(d: DeploymentRecord): void {
     ...Object.values(d.tokens).map((t) => [`${t.symbol} (canonical, ${t.decimals} decimals)`, t.address]),
     ...Object.values(d.demoTokens ?? {}).map((t) => [`${t.symbol} (**demo asset**, mintable, ${t.decimals} decimals)`, t.address]),
   ];
+  const tag = sourceTag(d);
   const table = [
     "| contract | address |",
     "|---|---|",
+    `| Verified source (git tag) | [\`${tag}\`](${REPO}/tree/${tag}) |`,
     ...rows.map(([n, a]) => `| ${n} | ${link(a ?? "")} |`),
     ...tokens.map(([n, a]) => `| ${n} | ${link(a ?? "")} |`),
   ].join("\n");
@@ -52,7 +62,9 @@ Deployed at block ${d.deployBlock} (${d.deployedAt}). Contracts are verified on 
 
 ${table}
 
-Generated from [\`packages/shared/src/addresses.ts\`](packages/shared/src/addresses.ts), which every package imports.
+The explorer's verified source is the tagged commit; later commits on \`main\` may differ from what is
+deployed. Generated from
+[\`packages/shared/src/addresses.ts\`](packages/shared/src/addresses.ts), which every package imports.
 <!-- deployment:end -->`;
   const text = readFileSync(path, "utf8");
   writeFileSync(path, text.replace(/<!-- deployment:start -->[\s\S]*<!-- deployment:end -->/, block));

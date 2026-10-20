@@ -2,11 +2,13 @@
 pragma solidity ^0.8.24;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IArbSys} from "../interfaces/IArbSys.sol";
 
 /// @title PlumbScore
-/// @notice Pure scoring and accounting math for Plumbline. Every rule that decides whether a maker
-///         earns a point, how a reward pot is split, how much bond is slashed, and whether the probe
-///         gate is open lives here so it can be unit-tested and fuzzed in isolation.
+/// @notice Scoring and accounting math for Plumbline. Every rule that decides whether a maker earns a
+///         point, how a reward pot is split, how much bond is slashed, and whether the probe gate is
+///         open lives here so it can be unit-tested and fuzzed in isolation. All of it is pure except
+///         the gate's block source (`gateBlockNumber`, `gateBlockHash`), which reads ArbSys.
 /// @dev Prices are human-unit quote-per-base values scaled by `PX_SCALE` (1e18), independent of token
 ///      decimals. A WHYPE/USDC price of 41.25 is `41.25e18`. Sizes are raw base-token units.
 library PlumbScore {
@@ -14,6 +16,12 @@ library PlumbScore {
     uint256 internal constant BPS = 10_000;
     /// @notice Fixed-point scale for prices.
     uint256 internal constant PX_SCALE = 1e18;
+    /// @notice Arbitrum's ArbSys precompile, the source of L2 block numbers and hashes on Orbit chains.
+    address internal constant ARB_SYS = 0x0000000000000000000000000000000000000064;
+    /// @notice Gas forwarded to each ArbSys read. On Elysium they cost about 800-1,200 gas. On a fork
+    ///         of an Orbit chain the precompile is only its `0xfe` placeholder code, and a call to it
+    ///         burns everything forwarded; the cap bounds that and the gate falls back.
+    uint256 internal constant ARB_SYS_GAS = 10_000;
 
     /// @notice Quote age reached `maxAge` (or the quote was never set / was cancelled).
     uint16 internal constant FAIL_STALE = 1 << 0;
@@ -177,9 +185,38 @@ library PlumbScore {
         toMakers = slashed - toReporter;
     }
 
+    /// @notice The block number the probe gate counts in, and whether it came from ArbSys.
+    /// @dev On an Arbitrum Orbit chain such as Elysium, the EVM's `block.number` is the parent chain's
+    ///      block number (HyperEVM's, advancing every 12-15s), not the chain's own. The gate needs a
+    ///      fresh hash per L2 block, so it reads `ArbSys.arbBlockNumber()`. Where nothing answers at
+    ///      `ARB_SYS` (anvil, forge tests, non-Arbitrum chains) the call returns no data, and on a fork
+    ///      it fails; either way the gate falls back to `block.number`.
+    function gateBlockNumber() internal view returns (uint256 number, bool arb) {
+        (bool ok, bytes memory ret) =
+            ARB_SYS.staticcall{gas: ARB_SYS_GAS}(abi.encodeCall(IArbSys.arbBlockNumber, ()));
+        if (ok && ret.length == 32) return (abi.decode(ret, (uint256)), true);
+        return (block.number, false);
+    }
+
+    /// @notice Hash of block `number` from the same source `gateBlockNumber` reported.
+    /// @dev With `arb`, reads `ArbSys.arbBlockHash`, which reverts outside the last 256 L2 blocks; that
+    ///      reads as the zero hash, which never opens the gate. Without `arb`, the EVM's `blockhash`.
+    function gateBlockHash(uint256 number, bool arb) internal view returns (bytes32) {
+        if (!arb) return blockhash(number);
+        (bool ok, bytes memory ret) =
+            ARB_SYS.staticcall{gas: ARB_SYS_GAS}(abi.encodeCall(IArbSys.arbBlockHash, (number)));
+        return ok && ret.length == 32 ? abi.decode(ret, (bytes32)) : bytes32(0);
+    }
+
+    /// @notice Hash of the block before the current one, from the gate's block source.
+    function prevGateBlockHash() internal view returns (bytes32) {
+        (uint256 head, bool arb) = gateBlockNumber();
+        return head == 0 ? bytes32(0) : gateBlockHash(head - 1, arb);
+    }
+
     /// @notice Whether a single recent block hash opens the probe gate.
     /// @dev `seed` is the campaign's gate seed, re-derived from `block.prevrandao` and the previous block
-    ///      hash at every probe, and `nonce` changes after every probe, so the same hash cannot open the
+    ///      hash (see `prevGateBlockHash`) at every probe, and `nonce` changes after every probe, so the same hash cannot open the
     ///      gate twice. Keeping prevrandao in the seed rather than in this check means a hit stays a hit
     ///      for the whole gate window on every chain: on Elysium (Arbitrum Orbit) prevrandao is the
     ///      constant 1, while on chains where it changes every block, mixing the current value in here
@@ -193,7 +230,8 @@ library PlumbScore {
         return uint256(keccak256(abi.encode(blockHash, seed, campaignId, nonce))) % odds == 0;
     }
 
-    /// @notice Next gate seed: folds the current prevrandao and the previous block hash into the old seed.
+    /// @notice Next gate seed: folds the current prevrandao and the previous gate block hash into the old
+    ///         seed.
     function nextGateSeed(bytes32 seed, uint256 prevrandao, bytes32 prevBlockHash) internal pure returns (bytes32) {
         return keccak256(abi.encode(seed, prevrandao, prevBlockHash));
     }

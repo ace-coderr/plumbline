@@ -24,6 +24,7 @@ Deployed at block 11477778 (2026-10-19T07:55:09.000Z). Contracts are verified on
 
 | contract | address |
 |---|---|
+| Verified source (git tag) | [`deployed-99801-2026-10-19`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-2026-10-19) |
 | PlumbQuoteFactory | [`0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4`](https://elysium.kinetiq.xyz/testnet-explorer/address/0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4) |
 | PlumbRouter | [`0x6E1937B16a8B23401133350a84cb6062c03848a6`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x6E1937B16a8B23401133350a84cb6062c03848a6) |
 | PlumbCampaigns | [`0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c`](https://elysium.kinetiq.xyz/testnet-explorer/address/0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c) |
@@ -34,8 +35,45 @@ Deployed at block 11477778 (2026-10-19T07:55:09.000Z). Contracts are verified on
 | USDC (canonical, 6 decimals) | [`0x7D29d8047B905000459c0E80c34a26CeedcB47b2`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x7D29d8047B905000459c0E80c34a26CeedcB47b2) |
 | PLUMBUSD (**demo asset**, mintable, 6 decimals) | [`0x3A3a8e3D34BB815cc211976C17ccf3376C97d750`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x3A3a8e3D34BB815cc211976C17ccf3376C97d750) |
 
-Generated from [`packages/shared/src/addresses.ts`](packages/shared/src/addresses.ts), which every package imports.
+The explorer's verified source is the tagged commit; later commits on `main` may differ from what is
+deployed. Generated from
+[`packages/shared/src/addresses.ts`](packages/shared/src/addresses.ts), which every package imports.
 <!-- deployment:end -->
+
+## Found on Elysium
+
+If a contract of yours uses `block.number` or `blockhash` on Elysium, this applies to you.
+
+**What we expected.** Elysium makes a block about every 140 ms (139 ms measured), and
+`eth_blockNumber` counts them. We expected `block.number` inside a contract to be that same number,
+and `blockhash(block.number - 1)` to change every block. Plumbline's probe gate was built on it:
+each of the last 8 block hashes has a 1-in-64 chance to open the gate, which works out to an
+opening about every 9 s.
+
+**What it does.** Elysium is an Arbitrum Orbit chain that settles to HyperEVM. As on any Arbitrum
+chain, `block.number` inside the EVM returns the parent chain's block number (HyperEVM's, around
+67.39M, while `eth_blockNumber` reports around 12.05M), and `blockhash()` follows it. That number
+moves roughly every 12–15 seconds, not once per L2 block. Nothing in the RPC shows this, except the
+`l1BlockNumber` field on block objects. `block.prevrandao` is the constant `1` as well.
+
+**What it cost us.** The gate saw new hashes only every 12–15 s, so it opened about 5× less often
+than designed: the keeper landed a probe every 1.5–2 minutes instead of every ~22 s (13 s minimum
+interval plus the gate wait). The budget planned ~350 probes (347 for campaign #1's two hours); the
+two campaigns produced 25. The gate accounts for the 5×; the rest is the keeper's host sleeping
+through most of campaign #1.
+
+**The fix.** Read the L2 block number and hash from the ArbSys precompile at `0x64`:
+`arbBlockNumber()` and `arbBlockHash(n)`. Both return Elysium's own blocks (we checked
+`arbBlockHash` against the RPC's block hashes). The gate now does this in
+[`PlumbScore.gateBlockNumber` / `gateBlockHash`](contracts/src/libraries/PlumbScore.sol), falling back to
+`block.number`/`blockhash` where nothing answers at `0x64` (anvil, forge tests).
+[`PlumbGateArbSys.t.sol`](contracts/test/PlumbGateArbSys.t.sol) runs the gate against a mock ArbSys
+while `block.number` stands still.
+
+**Status.** The live deployment predates the fix and still gates on `block.number`. The fix ships with
+the next deployment (`PlumbCampaigns`, and `PlumbRouter`, which pins its address), which needs about
+0.0006 HYPE. The deployed, verified source is tag
+[`deployed-99801-2026-10-19`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-2026-10-19).
 
 ## Demo assets
 
@@ -122,26 +160,26 @@ scored in is settled.
 ### Unpredictable probe timing
 
 Elysium is an Arbitrum Orbit chain, so `block.prevrandao` is the constant `1`. The probe gate takes
-its entropy from recent block hashes instead:
+its entropy from recent L2 block hashes instead, read from ArbSys (see [Found on Elysium](#found-on-elysium)):
 
-* After `minProbeInterval`, `blockhash(block.number - k)` for `k = 1..8` is checked against a
-  per-campaign seed (re-derived from `prevrandao` and the previous block hash at every probe) and the
-  probe nonce. Each hash is a hit with probability 1/64; any hit opens the gate.
+* After `minProbeInterval`, the hashes of the last 8 L2 blocks are checked against a per-campaign seed
+  (re-derived from `prevrandao` and the previous block hash at every probe) and the probe nonce. Each
+  hash is a hit with probability 1/64; any hit opens the gate and keeps it open for 8 blocks.
 * Being memoryless, the wait gives a maker nothing to time a fake quote against: nobody, keepers
   included, knows an opening is coming until the block that creates it.
 
-**Measured on Elysium, and different from the design assumption.** On Arbitrum chains the EVM's
+**Measured on the live deployment, which predates the ArbSys gate.** On Arbitrum chains the EVM's
 `block.number` is the *parent chain's* block number (HyperEVM, about 67.35M), not the L2 block
 number (about 11.8M), and `blockhash()` follows it. That number advances in jumps of roughly 15 every
 12–15 s rather than every ~150 ms L2 block. The gate therefore reshuffles once per jump, opening
 with probability 1 − (63/64)^8 ≈ 11.8% per jump: a mean wait of about 8.5 jumps, roughly 110 s.
 The live keeper landed one probe every 1.5–2 minutes. Timing is still unpredictable; it is just
-about 5× less frequent than the 8 s mean the contract comments assume.
+about 5× less frequent than designed.
 
-The fix is Orbit-native: read the L2 block number and hash from the `ArbSys` precompile
-(`arbBlockNumber()` / `arbBlockHash()`) so the gate reshuffles every L2 block. It changes
-`PlumbCampaigns` (and therefore `PlumbRouter`, which pins its address), so it ships with the next
-deployment. The deployed, verified source is the version in this repository.
+The fix, in this repository, reads the L2 block number and hash from the `ArbSys` precompile
+(`arbBlockNumber()` / `arbBlockHash()`) so the gate reshuffles every L2 block: a mean wait of 64
+blocks, about 9 s. It changes `PlumbCampaigns` (and therefore `PlumbRouter`, which pins its address),
+so it ships with the next deployment. The deployed, verified source is tag `deployed-99801-2026-10-19`.
 
 ### HyperCore seam
 

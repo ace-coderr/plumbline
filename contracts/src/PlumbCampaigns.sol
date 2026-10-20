@@ -57,7 +57,8 @@ contract PlumbCampaigns is IPlumbPenalizer, ReentrancyGuard {
     /// @param settledEpochs Epochs [0, settledEpochs) have been settled.
     /// @param lastProbeAt Timestamp of the last probe.
     /// @param probeNonce Probes run so far.
-    /// @param gateSeed Entropy for the probe gate, re-derived from prevrandao at every probe.
+    /// @param gateSeed Entropy for the probe gate, re-derived from prevrandao and the previous L2 block
+    ///        hash at every probe.
     struct State {
         address creator;
         address rewardToken;
@@ -107,12 +108,15 @@ contract PlumbCampaigns is IPlumbPenalizer, ReentrancyGuard {
     uint16 public constant SLASH_BPS = 2_000;
     /// @notice Share of each slash paid to the reporter; the rest tops up the epoch pot.
     uint16 public constant REPORTER_BPS = 5_000;
-    /// @notice How many recent block hashes can open the probe gate.
+    /// @notice How many recent L2 block hashes can open the probe gate.
     uint256 public constant GATE_WINDOW = 8;
-    /// @notice One in `GATE_ODDS` block hashes is a gate hit. Once `minProbeInterval` has passed, the
-    ///         wait for the next hit is geometric with a mean of `GATE_ODDS` blocks: about 8s at
-    ///         Elysium's ~120ms blocks. Being memoryless, the elapsed wait says nothing about when the
-    ///         next probe will land.
+    /// @notice One in `GATE_ODDS` L2 block hashes is a gate hit. Once `minProbeInterval` has passed, the
+    ///         wait for the next hit is geometric with a mean of `GATE_ODDS` L2 blocks: about 9s at
+    ///         Elysium's measured ~139ms blocks, and a hit stays usable for `GATE_WINDOW` blocks (about
+    ///         1.1s). Being memoryless, the elapsed wait says nothing about when the next probe will land.
+    /// @dev Block numbers and hashes come from ArbSys (`PlumbScore.gateBlockNumber`). Read from the
+    ///      EVM's `block.number`, which on Elysium follows HyperEVM and advances every 12-15s, the same
+    ///      odds give one opening every couple of minutes; that is how the first deployment behaved.
     uint256 public constant GATE_ODDS = 64;
     /// @notice Oldest reference price the probe will use, in seconds.
     uint256 public constant MAX_REFERENCE_AGE = 60;
@@ -276,7 +280,7 @@ contract PlumbCampaigns is IPlumbPenalizer, ReentrancyGuard {
             settledEpochs: 0,
             lastProbeAt: 0,
             probeNonce: 0,
-            gateSeed: PlumbScore.nextGateSeed(bytes32(id), block.prevrandao, blockhash(block.number - 1))
+            gateSeed: PlumbScore.nextGateSeed(bytes32(id), block.prevrandao, PlumbScore.prevGateBlockHash())
         });
 
         _pullExact(rewardToken, total);
@@ -377,7 +381,7 @@ contract PlumbCampaigns is IPlumbPenalizer, ReentrancyGuard {
         uint64 nonce = s.probeNonce;
         s.lastProbeAt = uint64(block.timestamp);
         s.probeNonce = nonce + 1;
-        s.gateSeed = PlumbScore.nextGateSeed(s.gateSeed, block.prevrandao, blockhash(block.number - 1));
+        s.gateSeed = PlumbScore.nextGateSeed(s.gateSeed, block.prevrandao, PlumbScore.prevGateBlockHash());
 
         PlumbScore.Targets memory targets = PlumbScore.Targets(t.maxSpreadBps, t.minDepthBase, t.minDepthQuote);
         uint256 refPx = _referencePx(s, t);
@@ -412,21 +416,23 @@ contract PlumbCampaigns is IPlumbPenalizer, ReentrancyGuard {
 
     /// @notice Whether `probe(id)` would be accepted in the current block.
     /// @dev Open when the campaign is running, `minProbeInterval` has passed since the last probe, and
-    ///      at least one of the last `GATE_WINDOW` block hashes is a gate hit for the current probe
-    ///      nonce. A hit keeps the gate open for `GATE_WINDOW` blocks, so a keeper that sees it can land
-    ///      a transaction. A maker learns of an opening only when a keeper does, which is too late to
-    ///      fake a quote and fund a vault ahead of the probe.
+    ///      at least one of the last `GATE_WINDOW` L2 block hashes is a gate hit for the current probe
+    ///      nonce. A hit keeps the gate open for `GATE_WINDOW` L2 blocks, so a keeper that sees it can
+    ///      land a transaction. A maker learns of an opening only when a keeper does, which is too late
+    ///      to fake a quote and fund a vault ahead of the probe. Blocks are counted on ArbSys where it
+    ///      exists, else on `block.number` (see `PlumbScore.gateBlockNumber`).
     function probeGateOpen(uint256 id) public view returns (bool) {
         Campaign storage t = _terms[id];
         State storage s = _state[id];
         if (t.epochLength == 0) return false;
         if (block.timestamp < s.startTime || block.timestamp >= _endTime(s, t)) return false;
         if (s.lastProbeAt != 0 && block.timestamp < uint256(s.lastProbeAt) + t.minProbeInterval) return false;
-        uint256 limit = block.number < GATE_WINDOW ? block.number : GATE_WINDOW;
+        (uint256 head, bool arb) = PlumbScore.gateBlockNumber();
+        uint256 limit = head < GATE_WINDOW ? head : GATE_WINDOW;
         bytes32 seed = s.gateSeed;
         uint64 nonce = s.probeNonce;
         for (uint256 k = 1; k <= limit; ++k) {
-            if (PlumbScore.gateHit(blockhash(block.number - k), seed, id, nonce, GATE_ODDS)) {
+            if (PlumbScore.gateHit(PlumbScore.gateBlockHash(head - k, arb), seed, id, nonce, GATE_ODDS)) {
                 return true;
             }
         }
