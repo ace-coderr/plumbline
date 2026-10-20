@@ -117,3 +117,24 @@ export function fmtUsd(x: number | null | undefined): string {
   if (Math.abs(x) >= 0.01) return `$${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return `$${x.toPrecision(2)}`;
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "19 Oct 11:37–21:54 UTC" (or spanning days): the window a set of probes covers, always in UTC. */
+export function utcWindow(from: number | null | undefined, to: number | null | undefined): string {
+  if (!from || !to) return "—";
+  const a = new Date(from * 1000);
+  const b = new Date(to * 1000);
+  const dayOf = (d: Date) => `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()] ?? ""}`;
+  const hm = (d: Date) => d.toISOString().slice(11, 16);
+  return dayOf(a) === dayOf(b)
+    ? `${dayOf(a)} ${hm(a)}–${hm(b)} UTC`
+    : `${dayOf(a)} ${hm(a)} – ${dayOf(b)} ${hm(b)} UTC`;
+}
+
+/** "19 Oct 21:53 UTC". */
+export function utcTime(ts: number | null | undefined): string {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()] ?? ""} ${d.toISOString().slice(11, 16)} UTC`;
+}

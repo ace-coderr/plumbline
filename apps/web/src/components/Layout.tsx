@@ -1,8 +1,8 @@
 import { NavLink, Outlet, Link } from "react-router-dom";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { addressUrl, deployment, elysiumTestnet } from "@plumbline/shared";
-import { STATIC, useHealth, useKeeper } from "../lib/api";
-import { SnapshotStamp } from "./Snapshot";
+import { STATIC, useCampaigns, useHealth, useKeeper, useMarkets } from "../lib/api";
+import { SnapshotStamp, useNow } from "./Snapshot";
 import { fmtInt, short } from "../lib/format";
 import { Wordmark } from "./Brand";
 import { Button, Dot, cx } from "./ui";
@@ -46,6 +46,12 @@ export function WalletButton() {
 function StatusBar() {
   const health = useHealth();
   const keeper = useKeeper();
+  const markets = useMarkets();
+  const campaigns = useCampaigns();
+  const now = useNow();
+  const vaults = (markets.data ?? []).reduce((a, m) => a + m.vaultCount, 0);
+  const quoting = (markets.data ?? []).reduce((a, m) => a + m.liveVaults, 0);
+  const running = (campaigns.data ?? []).filter((c) => now >= c.startTime && now < c.startTime + c.numEpochs * c.epochLength).length;
   const h = health.data;
   const k = keeper.data;
   const indexerTone = health.isError ? "fail" : h && h.lagBlocks < 50 ? "pass" : "warn";
@@ -58,6 +64,9 @@ function StatusBar() {
       <span className="num flex shrink-0 items-center gap-1.5">
         <Dot tone={k ? "pass" : "none"} live={Boolean(k)} />
         keeper {k ? `${fmtInt(k.totals.probes)} probes` : "not running"}
+      </span>
+      <span className="num hidden shrink-0 sm:inline">
+        {quoting} of {vaults} vaults quoting · {running} campaign{running === 1 ? "" : "s"} running
       </span>
       <span className="num hidden shrink-0 sm:inline">chain {deployment.chainId}</span>
       <span className="ml-auto hidden gap-4 md:flex">

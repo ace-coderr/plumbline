@@ -11,7 +11,7 @@ import {
   type QuoteView,
 } from "@plumbline/shared";
 import { STATIC, useMarket, useUptime } from "../lib/api";
-import { ago, clock, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, px, tone, toneText } from "../lib/format";
+import { ago, clock, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, px, tone, toneText, utcTime, utcWindow } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { ProbeStrip, UptimeChart } from "../components/charts";
 import { TxStatus } from "../components/TxStatus";
@@ -215,7 +215,7 @@ function SwapPanel({ m }: { m: MarketSummary }) {
 
 export function MarketPage() {
   const { pair = "" } = useParams();
-  const [win, setWin] = useState<Win>("6h");
+  const [win, setWin] = useState<Win>(STATIC ? "24h" : "6h");
   const market = useMarket(pair);
   const uptime = useUptime(pair, win);
 
@@ -224,6 +224,8 @@ export function MarketPage() {
   const { summary: m, book, fills, failedFills } = market.data;
   const mid =
     m.bestBidPx && m.bestAskPx ? ((px(m.bestBidPx) ?? 0) + (px(m.bestAskPx) ?? 0)) / 2 : null;
+  const v = m.verified;
+  const vMid = v.lastBidPx && v.lastAskPx ? ((px(v.lastBidPx) ?? 0) + (px(v.lastAskPx) ?? 0)) / 2 : null;
 
   return (
     <Page density="dense">
@@ -256,14 +258,30 @@ export function MarketPage() {
           </div>
         }
       />
-      <StatRow>
-        <Stat label={`Uptime ${win}`} value={fmtPct(uptime.data?.uptime, 2)} tone={tone(uptime.data?.uptime)} />
-        <Stat label="Mid" value={mid === null ? "—" : mid.toFixed(4)} />
-        <Stat label="Spread" value={m.spreadBps === null ? "—" : `${m.spreadBps} bps`} />
-        <Stat label="Bid depth" value={`${fmtAmt(m.bidDepth, m.quote.decimals, 0)} ${m.quote.symbol}`} />
-        <Stat label="Ask depth" value={`${fmtAmt(m.askDepth, m.base.decimals, 2)} ${m.base.symbol}`} />
-        <Stat label="Probes 24h" value={fmtInt(m.probes24h)} sub={`last ${ago(m.lastProbeAt)}`} />
-      </StatRow>
+      {STATIC ? (
+        // Frozen data: figures probes verified, over the market's whole probe window.
+        <StatRow>
+          <Stat label="Uptime" value={fmtPct(v.uptime, 2)} tone={tone(v.uptime)} sub={utcWindow(v.from, v.to)} />
+          <Stat label="Probes" value={fmtInt(v.probes)} sub={`last ${ago(m.lastProbeAt)}`} />
+          <Stat
+            label="Median spread"
+            value={v.medianSpreadBps === null ? "—" : `${v.medianSpreadBps.toFixed(1)} bps`}
+            sub="best bid to best ask, at each probe"
+          />
+          <Stat label="Verified mid" value={vMid === null ? "—" : vMid.toFixed(4)} sub={v.lastVerifiedAt ? `at ${utcTime(v.lastVerifiedAt)}` : undefined} />
+          <Stat label="Bid depth ±50 bps" value={v.probes ? `${fmtAmt(v.bidDepth50, m.quote.decimals, 3)} ${m.quote.symbol}` : "—"} sub="median over probes" />
+          <Stat label="Ask depth ±50 bps" value={v.probes ? `${fmtAmt(v.askDepth50, m.base.decimals, 4)} ${m.base.symbol}` : "—"} sub="median over probes" />
+        </StatRow>
+      ) : (
+        <StatRow>
+          <Stat label={`Uptime ${win}`} value={fmtPct(uptime.data?.uptime, 2)} tone={tone(uptime.data?.uptime)} />
+          <Stat label="Mid" value={mid === null ? "—" : mid.toFixed(4)} />
+          <Stat label="Spread" value={m.spreadBps === null ? "—" : `${m.spreadBps} bps`} />
+          <Stat label="Bid depth" value={`${fmtAmt(m.bidDepth, m.quote.decimals, 0)} ${m.quote.symbol}`} />
+          <Stat label="Ask depth" value={`${fmtAmt(m.askDepth, m.base.decimals, 2)} ${m.base.symbol}`} />
+          <Stat label="Probes 24h" value={fmtInt(m.probes24h)} sub={`last ${ago(m.lastProbeAt)}`} />
+        </StatRow>
+      )}
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px] [&>*]:min-w-0">
         <div className="space-y-4">

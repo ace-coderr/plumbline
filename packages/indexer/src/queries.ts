@@ -24,6 +24,7 @@ import {
   type TokenRef,
   type UptimeBucket,
   type UptimeResponse,
+  type VerifiedFigures,
   type Hash,
 } from "@plumbline/shared";
 import { getMeta, type DB } from "./db.js";
@@ -225,6 +226,96 @@ export class Queries {
     return m ? { symbol: m.s, decimals: m.d } : { symbol: "?", decimals: 18 };
   }
 
+  /**
+   * The book as probes verified it: for every probe in the window, the passing quotes only (fresh,
+   * tight, deep and fully backed at that instant). Built from on-chain events, so a fresh database
+   * rebuilds it exactly by backfilling. Returns per-probe best spreads, depth within each band of
+   * the mid, and the best bid and ask at the latest probe that verified any.
+   */
+  private verifiedBook(m: MarketRow, from: number, bands: number[]) {
+    const base = m.base_decimals;
+    const quoteDec = m.quote_decimals;
+    const rows = this.db
+      .prepare(
+        `SELECT r.campaign_id, r.nonce, r.ts, r.bid_px, r.ask_px, r.bid_size, r.ask_size
+         FROM probe_results r JOIN campaigns c ON c.id = r.campaign_id
+         WHERE c.market_id = ? AND r.ts >= ? AND r.passed = 1
+         ORDER BY r.ts, r.campaign_id, r.nonce`,
+      )
+      .all(m.id, from) as {
+      campaign_id: number;
+      nonce: number;
+      ts: number;
+      bid_px: string;
+      ask_px: string;
+      bid_size: string;
+      ask_size: string;
+    }[];
+    const byProbe = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const k = `${r.campaign_id}:${r.nonce}`;
+      const list = byProbe.get(k);
+      if (list) list.push(r);
+      else byProbe.set(k, [r]);
+    }
+    const askAt: bigint[][] = bands.map(() => []);
+    const bidAt: bigint[][] = bands.map(() => []);
+    const spreads: number[] = [];
+    let last: { bid: bigint; ask: bigint; ts: number } | null = null;
+    for (const group of byProbe.values()) {
+      let bestBid = 0n;
+      let bestAsk = 0n;
+      for (const q of group) {
+        const bid = BigInt(q.bid_px);
+        const ask = BigInt(q.ask_px);
+        if (BigInt(q.bid_size) > 0n && bid > bestBid) bestBid = bid;
+        if (BigInt(q.ask_size) > 0n && (bestAsk === 0n || ask < bestAsk)) bestAsk = ask;
+      }
+      if (bestBid === 0n || bestAsk === 0n || bestAsk <= bestBid) continue;
+      last = { bid: bestBid, ask: bestAsk, ts: group[0]?.ts ?? 0 };
+      spreads.push(Number(spreadBps(bestBid, bestAsk)));
+      const mid = (bestBid + bestAsk) / 2n;
+      bands.forEach((bps, bi) => {
+        let askBase = 0n;
+        let bidQuote = 0n;
+        for (const q of group) {
+          const ask = BigInt(q.ask_px);
+          const bid = BigInt(q.bid_px);
+          if (ask * 10_000n <= mid * BigInt(10_000 + bps)) askBase += BigInt(q.ask_size);
+          if (bid * 10_000n >= mid * BigInt(10_000 - bps)) {
+            bidQuote += quoteNotional(BigInt(q.bid_size), bid, base, quoteDec);
+          }
+        }
+        (askAt[bi] as bigint[]).push(askBase);
+        (bidAt[bi] as bigint[]).push(bidQuote);
+      });
+    }
+    return { spreads, askAt, bidAt, last };
+  }
+
+  /** Figures for a market from probe events alone, over every probe it has had. */
+  private verifiedFigures(m: MarketRow): VerifiedFigures {
+    const p = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n, SUM(CASE WHEN p.passed > 0 THEN 1 ELSE 0 END) AS covered, MIN(p.ts) AS first, MAX(p.ts) AS last
+         FROM probes p JOIN campaigns c ON c.id = p.campaign_id WHERE c.market_id = ? AND p.checked > 0`,
+      )
+      .get(m.id) as { n: number; covered: number | null; first: number | null; last: number | null };
+    const book = this.verifiedBook(m, 0, [50]);
+    return {
+      probes: p.n,
+      uptime: p.n ? (p.covered ?? 0) / p.n : null,
+      from: p.first,
+      to: p.last,
+      medianSpreadBps: median(book.spreads),
+      lastBidPx: book.last?.bid.toString() ?? null,
+      lastAskPx: book.last?.ask.toString() ?? null,
+      lastVerifiedAt: book.last?.ts ?? null,
+      bidDepth50: medianBig(book.bidAt[0] ?? []).toString(),
+      askDepth50: medianBig(book.askAt[0] ?? []).toString(),
+    };
+  }
+
   // -------------------------------------------------------------------------------------------
   // Markets
   // -------------------------------------------------------------------------------------------
@@ -284,6 +375,7 @@ export class Queries {
       campaignIds: this.campaignIdsFor(m.id),
       lastProbeAt: lastProbe.t,
       sampledAt: samples[0]?.ts ?? null,
+      verified: this.verifiedFigures(m),
     };
   }
 
@@ -681,55 +773,9 @@ export class Queries {
       )
       .get(m.id, from) as { n: number; covered: number | null; checks: number | null };
 
-    // Depth and spread from the quotes each probe verified: a passing ProbeResult means the quote was
-    // fresh, tight, deep and fully backed at that instant. Built from on-chain events, so a fresh
-    // database rebuilds it exactly by backfilling.
-    const verified = this.db
-      .prepare(
-        `SELECT r.campaign_id, r.nonce, r.bid_px, r.ask_px, r.bid_size, r.ask_size
-         FROM probe_results r JOIN campaigns c ON c.id = r.campaign_id
-         WHERE c.market_id = ? AND r.ts >= ? AND r.passed = 1
-         ORDER BY r.campaign_id, r.nonce`,
-      )
-      .all(m.id, from) as { campaign_id: number; nonce: number; bid_px: string; ask_px: string; bid_size: string; ask_size: string }[];
-    const byProbe = new Map<string, typeof verified>();
-    for (const r of verified) {
-      const k = `${r.campaign_id}:${r.nonce}`;
-      const list = byProbe.get(k);
-      if (list) list.push(r);
-      else byProbe.set(k, [r]);
-    }
     const bands = [25, 50];
-    const askAt: bigint[][] = bands.map(() => []);
-    const bidAt: bigint[][] = bands.map(() => []);
-    const spreads: number[] = [];
-    for (const group of byProbe.values()) {
-      let bestBid = 0n;
-      let bestAsk = 0n;
-      for (const q of group) {
-        const bid = BigInt(q.bid_px);
-        const ask = BigInt(q.ask_px);
-        if (BigInt(q.bid_size) > 0n && bid > bestBid) bestBid = bid;
-        if (BigInt(q.ask_size) > 0n && (bestAsk === 0n || ask < bestAsk)) bestAsk = ask;
-      }
-      if (bestBid === 0n || bestAsk === 0n || bestAsk <= bestBid) continue;
-      spreads.push(Number(spreadBps(bestBid, bestAsk)));
-      const mid = (bestBid + bestAsk) / 2n;
-      bands.forEach((bps, bi) => {
-        let askBase = 0n;
-        let bidQuote = 0n;
-        for (const q of group) {
-          const ask = BigInt(q.ask_px);
-          const bid = BigInt(q.bid_px);
-          if (ask * 10_000n <= mid * BigInt(10_000 + bps)) askBase += BigInt(q.ask_size);
-          if (bid * 10_000n >= mid * BigInt(10_000 - bps)) {
-            bidQuote += quoteNotional(BigInt(q.bid_size), bid, base.decimals, quote.decimals);
-          }
-        }
-        (askAt[bi] as bigint[]).push(askBase);
-        (bidAt[bi] as bigint[]).push(bidQuote);
-      });
-    }
+    // Depth and spread from the quotes each probe verified (see verifiedBook).
+    const { spreads, askAt, bidAt } = this.verifiedBook(m, from, bands);
 
     // Daily rollup.
     const dayRows = this.db

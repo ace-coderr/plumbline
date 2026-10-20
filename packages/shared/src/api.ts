@@ -43,6 +43,31 @@ export interface MarketSummary {
   campaignIds: number[];
   lastProbeAt: number | null;
   sampledAt: number | null;
+  /** Figures from probe events: what probes verified on-chain, over every probe on this market. */
+  verified: VerifiedFigures;
+}
+
+/**
+ * Market figures derived only from probe events. A passing ProbeResult means the quote was fresh,
+ * tight, deep and fully backed at that instant, so these hold for frozen data too.
+ */
+export interface VerifiedFigures {
+  /** Probes that checked at least one vault. */
+  probes: number;
+  /** Share of those probes in which at least one vault passed, 0..1. */
+  uptime: number | null;
+  /** First and last probe timestamps: the window the figures cover. */
+  from: number | null;
+  to: number | null;
+  /** Median best-bid to best-ask spread over probes, from passing quotes. */
+  medianSpreadBps: number | null;
+  /** Best passing bid and ask at the most recent probe that verified any. */
+  lastBidPx: string | null;
+  lastAskPx: string | null;
+  lastVerifiedAt: number | null;
+  /** Median depth within ±50 bps of mid over probes: bid notional (raw quote), ask size (raw base). */
+  bidDepth50: string;
+  askDepth50: string;
 }
 
 export interface FillView {

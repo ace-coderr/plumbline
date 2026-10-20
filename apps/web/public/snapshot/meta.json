@@ -1,8 +1,8 @@
 {
   "chainId": 99801,
-  "block": 11831287,
-  "blockTimestamp": 1792449532,
-  "takenAt": "2026-10-19T22:38:56.761Z",
+  "block": 12042240,
+  "blockTimestamp": 1792478110,
+  "takenAt": "2026-10-20T06:35:14.893Z",
   "contracts": {
     "factory": "0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4",
     "router": "0x6E1937B16a8B23401133350a84cb6062c03848a6",
