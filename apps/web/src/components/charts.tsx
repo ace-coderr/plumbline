@@ -1,18 +1,18 @@
 import { Bar, CartesianGrid, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { failLabels, txUrl, type EpochUptime, type ProbeView, type UptimeBucket } from "@plumbline/shared";
 import { dateTime, fmtPct, utcWindow } from "../lib/format";
-import { palette } from "../../tailwind.config";
+import { themed as color } from "../../tailwind.config";
 
 /*
  * Chart rules, shared by every chart in the app:
  *  - every chart carries a legend naming each colour and mark it draws;
- *  - colours come from the palette only: success for covered, danger for missed, violet for the
+ *  - colours come from the theme tokens only: success for covered, danger for missed, violet for the
  *    measured overlay, ink for counts and outlines; no grey fills;
  *  - a period with no probes is drawn as an explicit empty mark, never left as a gap.
  */
 
-const AXIS = { stroke: palette.ink, tick: { fill: palette.ink, fontSize: 11, fontFamily: "IBM Plex Mono" } } as const;
-const GRID = { stroke: palette.ink, strokeOpacity: 0.12, vertical: false } as const;
+const AXIS = { stroke: color.ink, tick: { fill: color.ink, fontSize: 11, fontFamily: "IBM Plex Mono" } } as const;
+const GRID = { stroke: color.ink, strokeOpacity: 0.12, vertical: false } as const;
 
 function TooltipBox({ children }: { children: React.ReactNode }) {
   return <div className="num rounded-[8px] border-2 border-ink bg-paper px-2.5 py-1.5 text-xs text-ink shadow-brut">{children}</div>;
@@ -32,11 +32,11 @@ export function ChartLegend({ items, className = "" }: { items: LegendItem[]; cl
       {items.map((it, i) => (
         <li key={i} className="flex items-center gap-1.5">
           {it.mark === "line" ? (
-            <span className="h-[3px] w-4" style={{ background: it.color ?? palette.ink }} />
+            <span className="h-[3px] w-4" style={{ background: it.color ?? color.ink }} />
           ) : (
             <span
               className="h-2.5 w-2.5 border-[1.5px] border-ink"
-              style={{ background: it.mark === "fill" ? (it.color ?? palette.ink) : palette.paper }}
+              style={{ background: it.mark === "fill" ? (it.color ?? color.ink) : color.paper }}
             />
           )}
           <span>{it.label}</span>
@@ -51,14 +51,14 @@ function EmptyMark(props: { x?: number | string; y?: number | string; width?: nu
   const { x, y, width, value } = props;
   if (Number(value) !== 0 || x === undefined || y === undefined || width === undefined) return null;
   const s = Math.max(3, Math.min(7, Number(width) - 1));
-  return <rect x={Number(x) + Number(width) / 2 - s / 2} y={Number(y) - s - 1} width={s} height={s} fill={palette.paper} stroke={palette.ink} strokeWidth={1.25} />;
+  return <rect x={Number(x) + Number(width) / 2 - s / 2} y={Number(y) - s - 1} width={s} height={s} fill={color.paper} stroke={color.ink} strokeWidth={1.25} />;
 }
 
 export const UPTIME_LEGEND: LegendItem[] = [
-  { label: "covered probes", mark: "fill", color: palette.success },
-  { label: "missed probes", mark: "fill", color: palette.danger },
+  { label: "covered probes", mark: "fill", color: color.success },
+  { label: "missed probes", mark: "fill", color: color.danger },
   { label: "no probes", mark: "empty" },
-  { label: "median spread, bps (right axis)", mark: "line", color: palette.violet },
+  { label: "median spread, bps (right axis)", mark: "line", color: color.violet },
 ];
 
 /**
@@ -87,7 +87,7 @@ export function UptimeChart({ buckets, bucketSeconds }: { buckets: UptimeBucket[
           <YAxis yAxisId="n" {...AXIS} allowDecimals={false} width={32} />
           <YAxis yAxisId="bps" orientation="right" {...AXIS} width={32} />
           <Tooltip
-            cursor={{ fill: palette.highlight, fillOpacity: 0.35 }}
+            cursor={{ fill: color.highlight, fillOpacity: 0.35 }}
             content={({ active, payload }) => {
               if (!active || !payload?.[0]) return null;
               const d = payload[0].payload as (typeof data)[number];
@@ -111,17 +111,17 @@ export function UptimeChart({ buckets, bucketSeconds }: { buckets: UptimeBucket[
               );
             }}
           />
-          <Bar yAxisId="n" dataKey="covered" stackId="p" fill={palette.success} isAnimationActive={false}>
+          <Bar yAxisId="n" dataKey="covered" stackId="p" fill={color.success} isAnimationActive={false}>
             <LabelList dataKey="probes" content={EmptyMark} />
           </Bar>
-          <Bar yAxisId="n" dataKey="missed" stackId="p" fill={palette.danger} isAnimationActive={false} />
+          <Bar yAxisId="n" dataKey="missed" stackId="p" fill={color.danger} isAnimationActive={false} />
           {/* Not bridged across buckets without probes: no spread was measured there. */}
           <Line
             yAxisId="bps"
             dataKey="spread"
-            stroke={palette.violet}
+            stroke={color.violet}
             strokeWidth={2}
-            dot={{ r: 2, fill: palette.violet, stroke: palette.violet }}
+            dot={{ r: 2, fill: color.violet, stroke: color.violet }}
             isAnimationActive={false}
           />
         </ComposedChart>
@@ -131,8 +131,8 @@ export function UptimeChart({ buckets, bucketSeconds }: { buckets: UptimeBucket[
 }
 
 export const PROBE_STRIP_LEGEND: LegendItem[] = [
-  { label: "covered: at least one vault passed (short tick: not every vault)", mark: "fill", color: palette.success },
-  { label: "missed: no vault passed", mark: "fill", color: palette.danger },
+  { label: "covered: at least one vault passed (short tick: not every vault)", mark: "fill", color: color.success },
+  { label: "missed: no vault passed", mark: "fill", color: color.danger },
 ];
 
 /** One tick per probe, newest on the right. Each tick links to its transaction. */
@@ -163,8 +163,8 @@ export function ProbeStrip({ probes, max = 120 }: { probes: ProbeView[]; max?: n
 }
 
 export const EPOCH_LEGEND: LegendItem[] = [
-  { label: "covered share", mark: "fill", color: palette.success },
-  { label: "missed share", mark: "fill", color: palette.danger },
+  { label: "covered share", mark: "fill", color: color.success },
+  { label: "missed share", mark: "fill", color: color.danger },
   { label: "no probes (0)", mark: "empty" },
 ];
 

@@ -6,6 +6,7 @@ import { STATIC, useCampaigns, useHealth, useKeeper, useMarkets } from "../lib/a
 import { SnapshotStamp, useNow } from "./Snapshot";
 import { fmtInt, short } from "../lib/format";
 import { Wordmark } from "./Brand";
+import { ThemeToggle } from "./ThemeToggle";
 import { Button, Dot, cx } from "./ui";
 
 const NAV = [
@@ -144,7 +145,8 @@ export function Layout() {
           <Link to="/" aria-label="Plumbline home">
             <Wordmark size={22} />
           </Link>
-          <div className="ml-auto sm:order-last">
+          <div className="ml-auto flex items-center gap-2 sm:order-last">
+            <ThemeToggle />
             <WalletButton />
           </div>
           <nav className="-mx-1 flex w-full gap-1 overflow-x-auto sm:mx-0 sm:w-auto">

@@ -2,15 +2,64 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Theme tokens as RGB channels (see tailwind.config.ts). data-theme on <html> is set before first
+ * paint by the inline script in index.html; light is the fallback when it is missing.
+ * --c-fill-ink / --c-fill-muted: text on the yellow highlight, which stays yellow in both themes.
+ */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --c-bg: 253 247 234;
+  --c-paper: 255 252 245;
+  --c-ink: 18 18 18;
+  --c-violet: 109 74 224;
+  --c-highlight: 255 216 77;
+  --c-success: 46 158 107;
+  --c-danger: 217 79 61;
+  --c-muted: 107 98 87;
+  --c-shadow: 18 18 18;
+  --c-fill-ink: 18 18 18;
+  --c-fill-muted: 107 98 87;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: 28 25 21;
+  --c-paper: 36 32 26;
+  --c-ink: 244 236 216;
+  --c-violet: 139 109 240;
+  --c-highlight: 255 216 77;
+  --c-success: 63 190 133;
+  --c-danger: 240 106 87;
+  --c-muted: 154 143 125;
+  --c-shadow: 0 0 0;
+  --c-fill-ink: 28 25 21;
+  --c-fill-muted: 74 64 48;
+}
+
+/*
+ * Yellow fills keep dark text in the dark theme. The fill's own border stays in the theme's ink;
+ * everything inside it reads ink and muted as the dark on-yellow values.
+ */
+:root[data-theme="dark"] .bg-highlight,
+:root[data-theme="dark"] .marker,
+:root[data-theme="dark"] .hover\:bg-highlight:hover {
+  color: rgb(var(--c-fill-ink));
+}
+:root[data-theme="dark"] .bg-highlight *,
+:root[data-theme="dark"] .marker * {
+  --c-ink: var(--c-fill-ink);
+  --c-muted: var(--c-fill-muted);
+}
+
 @layer base {
-  html {
-    color-scheme: light;
-  }
   body {
     @apply bg-bg font-sans text-[14px] leading-relaxed text-ink antialiased;
   }
   ::selection {
-    @apply bg-highlight text-ink;
+    background: rgb(var(--c-highlight));
+    color: rgb(var(--c-fill-ink));
   }
   input,
   select,

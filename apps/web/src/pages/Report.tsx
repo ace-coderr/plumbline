@@ -6,6 +6,7 @@ import { LoadFailed, Missing } from "../components/Missing";
 import { dateTime, duration, fmtAmt, fmtInt, fmtPct, short, tone, toneText, utcWindow } from "../lib/format";
 import { EpochGrid } from "../components/charts";
 import { Wordmark } from "../components/Brand";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { SnapshotStamp } from "../components/Snapshot";
 import { Button, DemoTag, ErrorNote, Loading, N, Page, Segmented, Stamp, Table, Td, Th, TxLink, cx } from "../components/ui";
 
@@ -183,6 +184,7 @@ export function ReportPage() {
                 }}
               />
             )}
+            <ThemeToggle />
             <Button className="h-9 px-3 text-xs" onClick={() => void share()}>
               {copied ? "Copied" : "Copy link"}
             </Button>
