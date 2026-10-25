@@ -65,6 +65,13 @@ export function HowItWorksPage() {
             It runs on <strong>Elysium testnet</strong>. No real money is involved anywhere on this site.
           </li>
           <li>
+            <strong>There are no live funded campaigns right now.</strong> The site shows a finished demo.
+          </li>
+          <li>
+            <strong>Every payout in this demo, rewards and probe fees, was in PLUMBUSD</strong>, a mintable demo token, not real
+            money. Nobody was paid anything of value, and the project has no funding obligation to anyone.
+          </li>
+          <li>
             <strong>PLUMBUSD is a mintable demo token</strong> standing in for USDC, which is not faucet-available on Elysium
             testnet. Only the Plumbline deployer can mint it.
           </li>
@@ -125,15 +132,19 @@ export function HowItWorksPage() {
             </li>
           </ul>
           <p>
-            Each pass is one point. At the end of every epoch the campaign's reward pot is split between makers by points.
+            Each pass is one point. A campaign exists only once a sponsor has funded its pool, and every payout comes from
+            that pool: at the end of each epoch, that epoch's share is split between makers by points. The protocol has no
+            treasury and never pays anyone itself. In this demo the author also acted as the sponsor, funding both pools with
+            PLUMBUSD.
           </p>
         </Step>
 
-        <Step n={3} title="Anyone can probe, and gets paid to">
+        <Step n={3} title="Anyone can probe; the campaign's pool pays them">
           <p>
             <span className="num">probe()</span> has no access control. Whoever sends it earns the{" "}
-            <strong>probe fee</strong>, a share of the epoch's pot set by the campaign (capped so fees can never take more than
-            half of it). That fee is the reason a stranger bothers: running a probe is a small paid job.
+            <strong>probe fee</strong>, paid from the campaign sponsor's pool: a share of the epoch's pot set in the campaign's
+            terms (capped so fees can never take more than half of it). That fee is the reason a stranger bothers, and it
+            exists only while a funded campaign is running.
           </p>
           <p>
             Probes cannot land at will. After a minimum interval, a probe is only accepted when a gate opens, decided by recent
@@ -146,7 +157,8 @@ export function HowItWorksPage() {
           <p>
             Takers trade through the router. If a vault's quote looks fillable but the vault does not hold the tokens, the
             fill reverts; the router checks the shortfall on-chain and <strong>slashes 20% of the maker's bond</strong>. Half
-            goes to the taker who found it, half back into the epoch's reward pot for the honest makers.
+            goes to the taker who found it, half into the epoch's pool for the honest makers. That payment comes only from the
+            slashed maker's bond.
           </p>
           <p>
             Withdrawals are timelocked for {WITHDRAW_DELAY} seconds and stop counting as inventory the moment they are queued,
@@ -184,7 +196,8 @@ export function HowItWorksPage() {
             Anyone with a little HYPE for gas: call <span className="num">probe(campaignId)</span> on the{" "}
             <Ext href={addressUrl(campaigns)}>campaigns contract</Ext> while its gate is open. The keeper in{" "}
             <Ext href={`${REPO_URL}/tree/main/packages/keeper`}>packages/keeper</Ext> does exactly that; it ran every probe in
-            this demo, from the author's wallet.
+            this demo, from the author's wallet. The probe fee comes out of the campaign sponsor's pool; with no funded
+            campaign running, as now, there is nothing to probe and no fee to earn.
           </p>
         </Faq>
 
@@ -192,7 +205,8 @@ export function HowItWorksPage() {
           <p>
             The probe does not trust the quote. It reads the vault's real token balances at that instant, net of queued
             withdrawals, and a quote advertising more than the vault holds fails. Separately, any taker can try to fill a quote
-            at any time; if the vault cannot pay, the maker's bond is slashed and the taker is paid half.
+            at any time; if the vault cannot pay, the maker's bond is slashed and the taker receives half of the slashed
+            amount.
           </p>
         </Faq>
 
