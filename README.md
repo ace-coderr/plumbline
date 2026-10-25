@@ -1,6 +1,6 @@
-**Live site: [plumbline-acedevv.vercel.app](https://plumbline-acedevv.vercel.app)** · a frozen snapshot of the testnet
+**Live site: [plumbline-elysium.vercel.app](https://plumbline-elysium.vercel.app)** · a frozen snapshot of the testnet
 run, with wallet actions that send real transactions ([what that means](#public-site-a-static-snapshot)) ·
-[how it works](https://plumbline-acedevv.vercel.app/how-it-works)
+[how it works](https://plumbline-elysium.vercel.app/how-it-works)
 
 <p align="center">
   <img src="apps/web/public/og-default.png" alt="plumbline" width="640" />

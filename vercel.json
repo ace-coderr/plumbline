@@ -5,11 +5,33 @@
   "buildCommand": "pnpm --filter @plumbline/shared build && pnpm --filter @plumbline/web build:static",
   "outputDirectory": "apps/web/dist",
   "cleanUrls": true,
-  "rewrites": [{ "source": "/((?!snapshot/|og/|assets/).*)", "destination": "/index.html" }],
+  "rewrites": [
+    {
+      "source": "/snapshot/:path*",
+      "destination": "/snapshot/:path*"
+    },
+    {
+      "source": "/og/:path*",
+      "destination": "/og/:path*"
+    },
+    {
+      "source": "/assets/:path*",
+      "destination": "/assets/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
   "headers": [
     {
       "source": "/snapshot/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300"
+        }
+      ]
     }
   ]
 }
