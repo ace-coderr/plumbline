@@ -223,10 +223,10 @@ export function MarketsPage() {
                       <Td right mono>
                         {fmtInt(f.probes)}
                       </Td>
-                      <Td right mono className="text-success">
+                      <Td right mono className="text-success-text">
                         {fmtPx(f.bid)}
                       </Td>
-                      <Td right mono className="text-danger">
+                      <Td right mono className="text-danger-text">
                         {fmtPx(f.ask)}
                       </Td>
                       <Td right mono>

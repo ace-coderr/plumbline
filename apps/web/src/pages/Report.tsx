@@ -306,7 +306,7 @@ export function ReportPage() {
                           {p.passed}/{p.checked}
                         </Td>
                         <Td>
-                          <span className={cx("text-xs font-semibold", p.passed > 0 ? "text-success" : "text-danger")}>
+                          <span className={cx("text-xs font-semibold", p.passed > 0 ? "text-success-text" : "text-danger-text")}>
                             {p.passed > 0 ? "covered" : "uncovered"}
                           </span>
                         </Td>

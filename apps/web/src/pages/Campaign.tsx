@@ -168,10 +168,10 @@ export function CampaignPage() {
                       <Td right mono className="text-violet">
                         {reward(r.earned)}
                       </Td>
-                      <Td right mono className={BigInt(r.bond) < BigInt(c.makerBond) ? "text-danger" : "text-ink"}>
+                      <Td right mono className={BigInt(r.bond) < BigInt(c.makerBond) ? "text-danger-text" : "text-ink"}>
                         {reward(r.bond, 3)}
                       </Td>
-                      <Td right mono className={r.penalties ? "text-danger" : "text-muted"}>
+                      <Td right mono className={r.penalties ? "text-danger-text" : "text-muted"}>
                         {r.penalties}
                       </Td>
                       <Td>
@@ -244,7 +244,7 @@ export function CampaignPage() {
                   <span className="text-muted">
                     #{p.nonce} {clock(p.ts)}
                   </span>
-                  <span className={p.passed === p.checked && p.checked > 0 ? "text-success" : p.passed > 0 ? "text-ink" : "text-danger"}>
+                  <span className={p.passed === p.checked && p.checked > 0 ? "text-success-text" : p.passed > 0 ? "text-ink" : "text-danger-text"}>
                     {p.passed}/{p.checked}
                   </span>
                   <span className="w-28 truncate text-muted" title={p.results.map((r) => failLabels(r.failMask).join(",")).join(" ")}>
@@ -265,7 +265,7 @@ export function CampaignPage() {
               penalties.map((p) => (
                 <div key={p.txHash + p.vault} className="flex items-center justify-between border-b border-ink py-1.5 font-mono text-2xs">
                   <AddrLink address={p.vault} />
-                  <span className="text-danger">−{reward(p.slashed)}</span>
+                  <span className="text-danger-text">−{reward(p.slashed)}</span>
                   <TxLink hash={p.txHash} />
                 </div>
               ))

@@ -108,9 +108,9 @@ export function tone(x: number | null | undefined): Tone {
 }
 
 export const toneText: Record<Tone, string> = {
-  pass: "text-success",
+  pass: "text-success-text",
   warn: "text-ink",
-  fail: "text-danger",
+  fail: "text-danger-text",
   none: "text-muted",
 };
 

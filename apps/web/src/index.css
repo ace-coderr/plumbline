@@ -18,6 +18,8 @@
   --c-success: 46 158 107;
   --c-danger: 217 79 61;
   --c-muted: 107 98 87;
+  --c-success-text: 22 122 73;
+  --c-danger-text: 192 57 43;
   --c-shadow: 18 18 18;
   --c-fill-ink: 18 18 18;
   --c-fill-muted: 107 98 87;
@@ -33,6 +35,8 @@
   --c-success: 63 190 133;
   --c-danger: 240 106 87;
   --c-muted: 154 143 125;
+  --c-success-text: 79 208 143;
+  --c-danger-text: 242 118 95;
   --c-shadow: 0 0 0;
   --c-fill-ink: 28 25 21;
   --c-fill-muted: 74 64 48;

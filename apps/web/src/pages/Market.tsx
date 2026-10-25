@@ -105,10 +105,10 @@ function Ladder({ book, m }: { book: QuoteView[]; m: MarketSummary }) {
               <Td right mono className="text-ink">
                 {fmtAmt(q.bidSize, m.base.decimals, 3)}
               </Td>
-              <Td right mono className="font-medium text-success">
+              <Td right mono className="font-medium text-success-text">
                 {fmtPx(q.bidPx)}
               </Td>
-              <Td right mono className="font-medium text-danger">
+              <Td right mono className="font-medium text-danger-text">
                 {fmtPx(q.askPx)}
               </Td>
               <Td right mono className="text-ink">
@@ -395,7 +395,7 @@ export function MarketPage() {
                           {clock(f.ts)}
                         </Td>
                         <Td>
-                          <span className={f.buyingBase ? "text-success" : "text-danger"}>{f.buyingBase ? "buy" : "sell"}</span>
+                          <span className={f.buyingBase ? "text-success-text" : "text-danger-text"}>{f.buyingBase ? "buy" : "sell"}</span>
                         </Td>
                         <Td right mono>
                           {fmtPx(f.px)}

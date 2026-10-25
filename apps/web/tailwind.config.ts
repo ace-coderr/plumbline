@@ -17,6 +17,9 @@ export const palette = {
   success: "#2E9E6B",
   danger: "#D94F3D",
   muted: "#6B6257", // secondary text on cream
+  // Small green/red text on bg or paper; success/danger stay for fills, bars and borders.
+  "success-text": "#167A49",
+  "danger-text": "#C0392B",
 } as const;
 
 /** Dark-theme values, mirrored as CSS variables in src/index.css. */
@@ -29,6 +32,8 @@ export const darkPalette = {
   success: "#3FBE85",
   danger: "#F06A57",
   muted: "#9A8F7D",
+  "success-text": "#4FD08F",
+  "danger-text": "#F2765F",
 } as const;
 
 type Token = keyof typeof palette;

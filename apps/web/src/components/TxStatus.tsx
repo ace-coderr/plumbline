@@ -4,7 +4,7 @@ import { TxLink } from "./ui";
 
 export function TxStatus({ state }: { state: TxState }) {
   if (state.status === "idle") return null;
-  const tone = state.status === "error" ? "text-danger" : state.status === "done" ? "text-success" : "text-ink";
+  const tone = state.status === "error" ? "text-danger-text" : state.status === "done" ? "text-success-text" : "text-ink";
   return (
     <div className={`num mt-2 text-xs ${tone}`}>
       {state.status === "signing" && <>sign {state.label} in your wallet…</>}
