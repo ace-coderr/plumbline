@@ -7,8 +7,10 @@
  *
  * Headless Chrome loads the composition, seeks its paused GSAP timeline to each frame time
  * (frame / FPS) and screenshots the stage. Each PNG goes to Chrome's own H.264 encoder (WebCodecs
- * VideoEncoder) with an exact timestamp, and mp4.mjs writes the encoded frames into an MP4 (4:2:0,
- * index at the front). Every frame is rendered from the timeline, never captured in real time, so
+ * VideoEncoder) with an exact timestamp, and mp4.mjs writes the encoded frames into an MP4 with the
+ * index at the front. Frames are converted to limited-range BT.709 4:2:0 before encoding, so the
+ * stream is standard yuv420p (Chrome would otherwise encode RGB input as full range, yuvj420p, which
+ * some phone players show with shifted contrast). Every frame is rendered from the timeline, never captured in real time, so
  * none can be dropped and every run produces the same frames. No ffmpeg needed. Fonts and GSAP load
  * from their CDNs, so the render needs network access.
  */
@@ -104,16 +106,58 @@ async function openEncoder(browser, v) {
         for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
         return btoa(s);
       };
+      // RGBA (sRGB) to I420, limited range, BT.709: Y 16..235, Cb/Cr 16..240, chroma averaged per 2x2.
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const i420 = new Uint8Array((width * height * 3) / 2);
+      const KR = 0.2126,
+        KB = 0.0722,
+        KG = 1 - KR - KB;
+      const toI420 = (rgba) => {
+        const cw = width >> 1;
+        const uOff = width * height;
+        const vOff = uOff + (width * height) / 4;
+        for (let y = 0; y < height; y += 2) {
+          for (let x = 0; x < width; x += 2) {
+            let cb = 0,
+              cr = 0;
+            for (let dy = 0; dy < 2; dy++) {
+              for (let dx = 0; dx < 2; dx++) {
+                const p = ((y + dy) * width + (x + dx)) * 4;
+                const r = rgba[p] / 255,
+                  g = rgba[p + 1] / 255,
+                  b = rgba[p + 2] / 255;
+                const yl = KR * r + KG * g + KB * b;
+                i420[(y + dy) * width + (x + dx)] = Math.round(16 + 219 * yl);
+                cb += (b - yl) / (2 * (1 - KB));
+                cr += (r - yl) / (2 * (1 - KR));
+              }
+            }
+            const c = (y >> 1) * cw + (x >> 1);
+            i420[uOff + c] = Math.round(128 + 224 * (cb / 4));
+            i420[vOff + c] = Math.round(128 + 224 * (cr / 4));
+          }
+        }
+      };
       window.__encode = async (png64, i, keyEvery) => {
         if (st.error) throw new Error(st.error);
         const bin = atob(png64);
         const bytes = new Uint8Array(bin.length);
         for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
         const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-        const frame = new VideoFrame(bmp, { timestamp: Math.round((i * 1e6) / fps), duration: Math.round(1e6 / fps) });
+        ctx.drawImage(bmp, 0, 0);
+        bmp.close();
+        toI420(ctx.getImageData(0, 0, width, height).data);
+        const frame = new VideoFrame(i420, {
+          format: "I420",
+          codedWidth: width,
+          codedHeight: height,
+          timestamp: Math.round((i * 1e6) / fps),
+          duration: Math.round(1e6 / fps),
+          colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "bt709", fullRange: false },
+        });
         enc.encode(frame, { keyFrame: i % keyEvery === 0 });
         frame.close();
-        bmp.close();
         while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 2));
       };
       window.__finish = async () => {
