@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plumbline · motion</title>
+    <!--
+      Plumbline motion piece, ~25 s, silent. One paused GSAP timeline, seekable and identical on every
+      run: window.__seek(t) renders time t; render.mjs steps it frame by frame into an MP4.
+        ?ar=1x1   1080 x 1080 (default)
+        ?ar=16x9  1920 x 1080
+        ?play     play the timeline in a loop, for previewing in a browser
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&family=IBM+Plex+Mono:wght@500;700&family=IBM+Plex+Sans:wght@500;600&display=block"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <style>
+      :root {
+        --bg: #fdf7ea;
+        --paper: #fffcf5;
+        --ink: #121212;
+        --violet: #6d4ae0;
+        --highlight: #ffd84d;
+        --success: #167a49;
+        --danger: #c0392b;
+        --display: "Bricolage Grotesque", system-ui, sans-serif;
+        --sans: "IBM Plex Sans", system-ui, sans-serif;
+        --mono: "IBM Plex Mono", ui-monospace, monospace;
+        --w: 1080px;
+        --text-w: 920px;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      #stage {
+        position: relative;
+        width: var(--w);
+        height: 1080px;
+        background: var(--bg);
+        color: var(--ink);
+        overflow: hidden;
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      #stage.wide {
+        --w: 1920px;
+        --text-w: 1440px;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        visibility: hidden;
+        opacity: 0;
+      }
+      .block {
+        width: var(--text-w);
+      }
+      .display {
+        font-family: var(--display);
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        margin: 0;
+        text-wrap: balance;
+      }
+      .num {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .w {
+        display: inline-block;
+        will-change: transform, opacity;
+      }
+      /* Marker highlight: a yellow box behind the phrase, swiped in left to right. */
+      .mk {
+        position: relative;
+        display: inline-block;
+        isolation: isolate;
+        padding: 0 0.12em;
+      }
+      .mk-bg {
+        position: absolute;
+        inset: 0.06em 0 0.02em 0;
+        background: var(--highlight);
+        border-radius: 0.06em;
+        transform-origin: left center;
+        transform: scaleX(0);
+        z-index: -1;
+      }
+      .card {
+        border: 2px solid var(--ink);
+        border-radius: 10px;
+        background: var(--paper);
+        box-shadow: 4px 4px 0 var(--ink);
+      }
+
+      /* 1 */
+      #s1 h1 {
+        font-size: 92px;
+        line-height: 1.04;
+      }
+      .wide #s1 h1 {
+        font-size: 104px;
+      }
+
+      /* 2 */
+      #s2 h1 {
+        font-size: 196px;
+      }
+      .wide #s2 h1 {
+        font-size: 250px;
+      }
+
+      /* 3 */
+      #s3 .lead {
+        font-size: 132px;
+      }
+      #s3 .line {
+        font-size: 66px;
+        line-height: 1.12;
+        margin-top: 34px;
+      }
+      #s3 .line + .line {
+        margin-top: 10px;
+      }
+      .wide #s3 .lead {
+        font-size: 150px;
+      }
+      .wide #s3 .line {
+        font-size: 78px;
+      }
+
+      /* 4 */
+      #s4 h1 {
+        font-size: 92px;
+        line-height: 1.06;
+      }
+      #s4 .accent {
+        color: var(--violet);
+        display: inline-block;
+      }
+      .wide #s4 h1 {
+        font-size: 108px;
+      }
+
+      /* 5 */
+      #s5 .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 34px;
+        width: 920px;
+      }
+      .wide #s5 .grid {
+        grid-template-columns: repeat(4, 1fr);
+        width: 1600px;
+        gap: 36px;
+      }
+      #s5 .card {
+        height: 330px;
+        padding: 30px 32px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .wide #s5 .card {
+        height: 420px;
+      }
+      #s5 .idx {
+        font-size: 30px;
+        font-weight: 700;
+        color: var(--violet);
+      }
+      #s5 .word {
+        font-size: 74px;
+        line-height: 0.98;
+      }
+      #s5 .word.long {
+        font-size: 42px;
+        line-height: 1.04;
+      }
+      .wide #s5 .word.long {
+        font-size: 48px;
+      }
+      #s5 .sub {
+        font-size: 30px;
+        font-weight: 500;
+        line-height: 1.25;
+        text-wrap: balance;
+      }
+
+      /* 6 */
+      #s6 .card {
+        padding: 30px 60px 22px;
+      }
+      #s6 .pct {
+        font-size: 210px;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        color: var(--success);
+        white-space: pre;
+      }
+      #s6 .label {
+        margin-top: 40px;
+        font-size: 44px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      #s6 .tail {
+        margin-top: 22px;
+        font-size: 50px;
+        font-weight: 600;
+        text-align: center;
+        line-height: 1.2;
+        max-width: 900px;
+        text-wrap: balance;
+      }
+      .wide #s6 .pct {
+        font-size: 240px;
+      }
+      .wide #s6 .tail {
+        max-width: 1400px;
+      }
+
+      /* 7 */
+      #s7 h1 {
+        font-size: 84px;
+        line-height: 1.06;
+      }
+      .wide #s7 h1 {
+        font-size: 100px;
+      }
+      #s7 .rail {
+        position: relative;
+        width: 100%;
+        height: 96px;
+        margin-top: 90px;
+        overflow: hidden;
+      }
+      #s7 .strip {
+        position: absolute;
+        left: 0;
+        top: 8px;
+        display: flex;
+        gap: 14px;
+      }
+      #s7 .blk {
+        flex: none;
+        width: 66px;
+        height: 66px;
+        box-sizing: border-box;
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        background: var(--paper);
+        box-shadow: 4px 4px 0 var(--ink);
+      }
+      #s7 .blk.v {
+        background: var(--violet);
+      }
+      #s7 .cap {
+        margin-top: 34px;
+        font-size: 38px;
+        font-weight: 500;
+      }
+
+      /* 8 */
+      #s8 .brand {
+        display: flex;
+        align-items: center;
+        gap: 34px;
+      }
+      #s8 .wordmark {
+        font-size: 158px;
+      }
+      #s8 .tag {
+        margin-top: 54px;
+        font-size: 62px;
+      }
+      #s8 .url {
+        margin-top: 50px;
+        font-size: 44px;
+        font-weight: 700;
+        padding: 18px 30px;
+      }
+      .wide #s8 .wordmark {
+        font-size: 180px;
+      }
+      .wide #s8 .tag {
+        font-size: 70px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <!-- 1 -->
+      <section class="scene" id="s1">
+        <div class="block">
+          <h1 class="display">
+            <span class="w">Your</span> <span class="w">market</span> <span class="w">maker</span> <span class="w">says</span>
+            <span class="w">the</span> <span class="w">spread</span> <span class="w">is</span> <span class="w">tight.</span>
+          </h1>
+        </div>
+      </section>
+
+      <!-- 2 -->
+      <section class="scene" id="s2">
+        <h1 class="display"><span class="mk"><span class="mk-bg"></span>Prove it.</span></h1>
+      </section>
+
+      <!-- 3 -->
+      <section class="scene" id="s3">
+        <div class="block">
+          <h1 class="display lead"><span class="w">You</span> <span class="w">can't.</span></h1>
+          <p class="display line l2">
+            <span class="w">The</span> <span class="w">deals</span> <span class="w">are</span> <span class="w">private.</span>
+          </p>
+          <p class="display line l3">
+            <span class="w">The</span> <span class="w">promise</span> <span class="w">is</span> <span class="w">just</span>
+            <span class="w">words.</span>
+          </p>
+        </div>
+      </section>
+
+      <!-- 4 -->
+      <section class="scene" id="s4">
+        <div class="block">
+          <h1 class="display">
+            <span class="w l1">Plumbline checks</span><br />
+            <span class="accent l2">hundreds of times<br />an hour.</span>
+          </h1>
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section class="scene" id="s5">
+        <div class="grid">
+          <div class="card c"><span class="idx num">01</span><span class="display word">FRESH</span><span class="sub">posted in the last 2 seconds</span></div>
+          <div class="card c"><span class="idx num">02</span><span class="display word">TIGHT</span><span class="sub">spread inside the agreed maximum</span></div>
+          <div class="card c"><span class="idx num">03</span><span class="display word">DEEP</span><span class="sub">size at or above the minimum</span></div>
+          <div class="card c">
+            <span class="idx num">04</span><span class="display word long">BACKED BY REAL INVENTORY</span><span class="sub">tokens in the vault, right now</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6 -->
+      <section class="scene" id="s6">
+        <div class="card pc"><div class="pct num">  0.00%</div></div>
+        <div class="label num">verified uptime</div>
+        <div class="tail">every probe is a transaction you can open</div>
+      </section>
+
+      <!-- 7 -->
+      <section class="scene" id="s7">
+        <div class="block"><h1 class="display">Only affordable where blocks are this fast.</h1></div>
+        <div class="rail"><div class="strip"></div></div>
+        <div class="cap num">a new block every ~140 ms</div>
+      </section>
+
+      <!-- 8 -->
+      <section class="scene" id="s8">
+        <div class="brand">
+          <svg class="mark" width="190" height="190" viewBox="0 0 32 32" aria-hidden="true">
+            <line class="cord" x1="16" y1="1.5" x2="16" y2="12.5" stroke="#121212" stroke-width="2.5" stroke-linecap="round" />
+            <g class="bob">
+              <path d="M11.5 12.5 h9 l3.6 7 L16 30 L7.9 19.5 Z" fill="#6D4AE0" stroke="#121212" stroke-width="2" stroke-linejoin="round" />
+              <path d="M11.5 12.5 h9 l3.6 7 H7.9 Z" fill="#FFD84D" stroke="#121212" stroke-width="2" stroke-linejoin="round" />
+            </g>
+          </svg>
+          <span class="display wordmark">plumbline</span>
+        </div>
+        <div class="display tag"><span class="mk"><span class="mk-bg"></span>verifiable liquidity uptime</span></div>
+        <div class="card url num">plumbline-elysium.vercel.app</div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search);
+        var wide = params.get("ar") === "16x9";
+        var stage = document.getElementById("stage");
+        if (wide) stage.classList.add("wide");
+        var q = function (s) {
+          return stage.querySelector(s);
+        };
+        var qa = function (s) {
+          return stage.querySelectorAll(s);
+        };
+
+        // Block strip for scene 7: every fifth block violet. Fixed layout, no randomness.
+        var strip = q("#s7 .strip");
+        for (var i = 0; i < 60; i++) {
+          var b = document.createElement("div");
+          b.className = "blk" + (i % 5 === 3 ? " v" : "");
+          strip.appendChild(b);
+        }
+
+        var INK = "#121212";
+        var shadow = function (n) {
+          return n + "px " + n + "px 0 " + INK;
+        };
+
+        // The signature: a card drops onto its shadow.
+        function stamp(tl, target, at) {
+          tl.fromTo(
+            target,
+            { x: -14, y: -14, autoAlpha: 0, boxShadow: shadow(18) },
+            { x: 0, y: 0, autoAlpha: 1, boxShadow: shadow(4), duration: 0.2, ease: "power4.in" },
+            at,
+          ).fromTo(target, { scale: 1.015 }, { scale: 1, duration: 0.12, ease: "power2.out", immediateRender: false }, ">");
+        }
+        function swipe(tl, target, at, dur) {
+          tl.to(target, { scaleX: 1, duration: dur || 0.38, ease: "power2.inOut" }, at);
+        }
+        // Hard cut: a scene is on screen from `from` to `to`, no crossfade.
+        function cut(tl, sel, from, to) {
+          tl.set(sel, { autoAlpha: 1 }, from).set(sel, { autoAlpha: 0 }, to);
+        }
+
+        var T = { s1: 0, s2: 2.7, s3: 4.7, s4: 8.2, s5: 11.0, s6: 14.8, s7: 18.8, s8: 21.8, end: 25.6 };
+        var tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
+
+        // 1 · the claim, plain ink
+        cut(tl, "#s1", T.s1, T.s2);
+        tl.from(qa("#s1 .w"), { y: 46, autoAlpha: 0, duration: 0.42, stagger: 0.07 }, T.s1 + 0.15);
+
+        // 2 · Prove it.
+        cut(tl, "#s2", T.s2, T.s3);
+        tl.from(q("#s2 h1"), { y: 36, autoAlpha: 0, duration: 0.28 }, T.s2 + 0.05);
+        swipe(tl, q("#s2 .mk-bg"), T.s2 + 0.38, 0.42);
+
+        // 3 · the words break
+        cut(tl, "#s3", T.s3, T.s4);
+        tl.from(qa("#s3 .lead .w"), { y: 40, autoAlpha: 0, duration: 0.3, stagger: 0.08 }, T.s3 + 0.05);
+        tl.from(qa("#s3 .l2 .w"), { y: 30, autoAlpha: 0, duration: 0.3, stagger: 0.05 }, T.s3 + 0.6);
+        tl.from(qa("#s3 .l3 .w"), { y: 30, autoAlpha: 0, duration: 0.3, stagger: 0.05 }, T.s3 + 1.15);
+        var falling = Array.prototype.slice.call(qa("#s3 .l2 .w, #s3 .l3 .w"));
+        var rot = [-14, 9, -6, 18, 7, -19, 12, -9, 22];
+        var drop = [210, 260, 190, 300, 240, 280, 200, 320, 260];
+        falling.forEach(function (w, k) {
+          tl.to(w, { y: drop[k], rotation: rot[k], autoAlpha: 0, duration: 0.62, ease: "power2.in" }, T.s3 + 2.35 + k * 0.045);
+        });
+        tl.to(qa("#s3 .lead .w"), { autoAlpha: 0, y: -20, duration: 0.3, stagger: 0.06, ease: "power2.in" }, T.s3 + 2.95);
+
+        // 4 · Plumbline checks, violet accent
+        cut(tl, "#s4", T.s4, T.s5);
+        tl.from(q("#s4 .l1"), { y: 40, autoAlpha: 0, duration: 0.34 }, T.s4 + 0.08);
+        tl.fromTo(
+          q("#s4 .l2"),
+          { clipPath: "inset(0 100% 0 0)" },
+          { clipPath: "inset(0 0% 0 0)", duration: 0.55, ease: "power2.inOut" },
+          T.s4 + 0.55,
+        );
+
+        // 5 · four cards stamp in
+        cut(tl, "#s5", T.s5, T.s6);
+        tl.set(qa("#s5 .c"), { autoAlpha: 0 }, T.s5);
+        qa("#s5 .c").forEach(function (c, k) {
+          stamp(tl, c, T.s5 + 0.2 + k * 0.42);
+        });
+
+        // 6 · 88.00% counts up and lands hard
+        cut(tl, "#s6", T.s6, T.s7);
+        var pct = q("#s6 .pct");
+        var counter = { v: 0 };
+        var FIG = " "; // figure space keeps the width fixed while digits are missing
+        var show = function () {
+          var s = counter.v.toFixed(2);
+          while (s.length < 5) s = FIG + s;
+          pct.textContent = s + "%";
+        };
+        stamp(tl, q("#s6 .pc"), T.s6 + 0.05);
+        tl.fromTo(counter, { v: 0 }, { v: 88, duration: 1.35, ease: "power3.out", onUpdate: show }, T.s6 + 0.3);
+        tl.fromTo(q("#s6 .pc"), { scale: 1.07 }, { scale: 1, duration: 0.2, ease: "power4.out", immediateRender: false }, T.s6 + 1.65);
+        tl.from(q("#s6 .label"), { y: 24, autoAlpha: 0, duration: 0.3 }, T.s6 + 1.85);
+        tl.from(q("#s6 .tail"), { y: 24, autoAlpha: 0, duration: 0.34 }, T.s6 + 2.35);
+
+        // 7 · blocks tick past
+        cut(tl, "#s7", T.s7, T.s8);
+        tl.from(q("#s7 h1"), { y: 40, autoAlpha: 0, duration: 0.34 }, T.s7 + 0.05);
+        tl.from(q("#s7 .cap"), { autoAlpha: 0, duration: 0.3 }, T.s7 + 0.7);
+        var PITCH = 80; // block width 66 + gap 14
+        var STEPS = 21; // ~7 blocks a second across 3 s
+        tl.fromTo(
+          strip,
+          { x: 0 },
+          { x: -PITCH * STEPS, duration: 3.0, ease: "steps(" + STEPS + ")" },
+          T.s7,
+        );
+
+        // 8 · end card, held
+        cut(tl, "#s8", T.s8, T.end + 1);
+        tl.from(q("#s8 .cord"), { attr: { y2: 1.5 }, duration: 0.25, ease: "power2.out" }, T.s8 + 0.05);
+        tl.from(q("#s8 .bob"), { y: -12, autoAlpha: 0, duration: 0.42, ease: "back.out(2.2)" }, T.s8 + 0.18);
+        tl.from(q("#s8 .wordmark"), { x: -30, autoAlpha: 0, duration: 0.36 }, T.s8 + 0.28);
+        tl.from(q("#s8 .tag"), { y: 24, autoAlpha: 0, duration: 0.3 }, T.s8 + 0.6);
+        swipe(tl, q("#s8 .mk-bg"), T.s8 + 0.8, 0.45);
+        stamp(tl, q("#s8 .url"), T.s8 + 1.05);
+        tl.set({}, {}, T.end);
+
+        show();
+        window.__tl = tl;
+        window.__duration = T.end;
+        window.__seek = function (t) {
+          tl.seek(t, false);
+        };
+        window.__ready = false;
+        var fonts = [
+          '800 100px "Bricolage Grotesque"',
+          '500 40px "IBM Plex Mono"',
+          '700 40px "IBM Plex Mono"',
+          '600 40px "IBM Plex Sans"',
+          '500 40px "IBM Plex Sans"',
+        ];
+        Promise.all(
+          fonts.map(function (f) {
+            return document.fonts.load(f);
+          }),
+        )
+          .then(function () {
+            return document.fonts.ready;
+          })
+          .then(function () {
+            tl.seek(0, false);
+            window.__ready = true;
+            if (params.has("play")) tl.repeat(-1).play(0);
+          });
+      })();
+    </script>
+  </body>
+</html>

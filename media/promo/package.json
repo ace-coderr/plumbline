@@ -1,0 +1,12 @@
+{
+  "name": "plumbline-motion",
+  "private": true,
+  "type": "module",
+  "description": "Renders plumbline-motion.html to H.264 MP4, frame by frame, with Chrome's own encoder.",
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
