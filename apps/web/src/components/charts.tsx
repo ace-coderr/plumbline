@@ -104,7 +104,7 @@ export function UptimeChart({ buckets, bucketSeconds }: { buckets: UptimeBucket[
                         <span className="text-success-text">{d.covered} covered</span> · <span className="text-danger-text">{d.missed} missed</span>
                       </div>
                       <div>uptime {fmtPct(d.rate)}</div>
-                      <div className="text-violet">median spread {d.spread === null ? "—" : `${d.spread} bps`}</div>
+                      <div className="text-violet-text">median spread {d.spread === null ? "—" : `${d.spread} bps`}</div>
                     </>
                   )}
                 </TooltipBox>

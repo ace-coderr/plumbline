@@ -20,9 +20,11 @@
   --c-muted: 107 98 87;
   --c-success-text: 22 122 73;
   --c-danger-text: 192 57 43;
+  --c-violet-text: 109 74 224;
+  --c-on-violet: 255 252 245;
   --c-shadow: 18 18 18;
   --c-fill-ink: 18 18 18;
-  --c-fill-muted: 107 98 87;
+  --c-fill-muted: 94 86 76;
 }
 
 :root[data-theme="dark"] {
@@ -37,22 +39,25 @@
   --c-muted: 154 143 125;
   --c-success-text: 79 208 143;
   --c-danger-text: 242 118 95;
+  --c-violet-text: 164 139 245;
+  --c-on-violet: 15 13 10;
   --c-shadow: 0 0 0;
   --c-fill-ink: 28 25 21;
   --c-fill-muted: 74 64 48;
 }
 
 /*
- * Yellow fills keep dark text in the dark theme. The fill's own border stays in the theme's ink;
- * everything inside it reads ink and muted as the dark on-yellow values.
+ * Text on the yellow highlight. In both themes everything inside a yellow fill reads ink and muted
+ * as the on-yellow values (muted darkened to clear 4.5:1). In dark the fill's own text turns dark
+ * too, while its border stays in the theme's ink.
  */
 :root[data-theme="dark"] .bg-highlight,
 :root[data-theme="dark"] .marker,
 :root[data-theme="dark"] .hover\:bg-highlight:hover {
   color: rgb(var(--c-fill-ink));
 }
-:root[data-theme="dark"] .bg-highlight *,
-:root[data-theme="dark"] .marker * {
+.bg-highlight *,
+.marker * {
   --c-ink: var(--c-fill-ink);
   --c-muted: var(--c-fill-muted);
 }
@@ -96,7 +101,7 @@
     -webkit-box-decoration-break: clone;
   }
   .link {
-    @apply font-medium text-violet underline decoration-2 underline-offset-2 hover:text-ink;
+    @apply font-medium text-violet-text underline decoration-2 underline-offset-2 hover:text-ink;
   }
   /* Hard offset shadow that presses toward its shadow on hover. */
   .press {

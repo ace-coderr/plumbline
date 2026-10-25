@@ -105,12 +105,12 @@ export function StatRow({ children }: { children: ReactNode }) {
 
 export function Badge({ tone, children }: { tone: Tone | "highlight" | "violet"; children: ReactNode }) {
   const styles: Record<Tone | "highlight" | "violet", string> = {
-    pass: "bg-success text-paper",
+    pass: "bg-success-text text-paper",
     warn: "bg-highlight text-ink",
-    fail: "bg-danger text-paper",
+    fail: "bg-danger-text text-paper",
     none: "bg-paper text-ink",
     highlight: "bg-highlight text-ink",
-    violet: "bg-violet text-paper",
+    violet: "bg-violet text-on-violet",
   };
   return (
     <span
@@ -200,9 +200,9 @@ export function Button({
   const d = useDensity();
   const styles = {
     default: "bg-paper text-ink",
-    primary: "bg-violet text-paper",
+    primary: "bg-violet text-on-violet",
     ghost: "bg-bg text-ink",
-    danger: "bg-danger text-paper",
+    danger: "bg-danger-text text-paper",
   } as const;
   return (
     <button
@@ -279,7 +279,7 @@ export function Segmented<T extends string>({
           className={cx(
             "num h-7 px-2.5 text-xs font-semibold",
             i > 0 && "border-l-2 border-ink",
-            o === value ? "bg-violet text-paper" : "text-ink hover:bg-highlight",
+            o === value ? "bg-violet text-on-violet" : "text-ink hover:bg-highlight",
           )}
         >
           {o}
@@ -299,7 +299,7 @@ export function TxLink({ hash, children }: { hash: string; children?: ReactNode 
 
 export function AddrLink({ address, n = 4 }: { address: string; n?: number }) {
   return (
-    <a href={addressUrl(address)} target="_blank" rel="noreferrer" className="num text-ink underline decoration-1 underline-offset-2 hover:text-violet" title={address}>
+    <a href={addressUrl(address)} target="_blank" rel="noreferrer" className="num text-ink underline decoration-1 underline-offset-2 hover:text-violet-text" title={address}>
       {short(address, n)}
     </a>
   );
@@ -321,7 +321,7 @@ export function Loading({ rows = 3 }: { rows?: number }) {
 
 export function ErrorNote({ error }: { error: unknown }) {
   return (
-    <div className="num rounded-card border-2 border-ink bg-danger px-3 py-2 text-xs text-paper">
+    <div className="num rounded-card border-2 border-ink bg-danger-text px-3 py-2 text-xs text-paper">
       {error instanceof Error ? error.message : String(error)}
     </div>
   );
@@ -333,7 +333,7 @@ export function PageHeader({ title, sub, right, kicker }: { title: ReactNode; su
   return (
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
-        {kicker !== undefined && <div className="label mb-2 text-violet">{kicker}</div>}
+        {kicker !== undefined && <div className="label mb-2 text-violet-text">{kicker}</div>}
         <h1
           className={
             d === "dense"

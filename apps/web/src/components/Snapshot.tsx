@@ -21,7 +21,7 @@ export function SnapshotStamp() {
       <span className="font-bold uppercase tracking-label">Snapshot</span>
       <span>
         block{" "}
-        <a href={blockUrl(m.block)} target="_blank" rel="noreferrer" className="font-semibold underline decoration-2 underline-offset-2 hover:text-violet">
+        <a href={blockUrl(m.block)} target="_blank" rel="noreferrer" className="font-semibold underline decoration-2 underline-offset-2 hover:text-violet-text">
           #{fmtInt(m.block)}
         </a>
       </span>

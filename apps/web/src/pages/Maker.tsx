@@ -677,7 +677,7 @@ export function MakerPage() {
                         <Td right mono className={toneText[tone(rate)]}>
                           {fmtPct(rate)}
                         </Td>
-                        <Td right mono className="text-violet">
+                        <Td right mono className="text-violet-text">
                           {s.reward && c ? `${fmtAmt(s.reward, c.rewardDecimals, 4)} ${c.rewardSymbol}` : <span className="text-muted">pending</span>}
                         </Td>
                       </tr>

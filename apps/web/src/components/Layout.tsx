@@ -123,13 +123,13 @@ function StatusBar() {
             href={addressUrl(deployment.contracts[c])}
             target="_blank"
             rel="noreferrer"
-            className="num hidden hover:text-violet md:inline"
+            className="num hidden hover:text-violet-text md:inline"
             title={`${c} contract on the Elysium explorer`}
           >
             {c} {short(deployment.contracts[c], 4)}
           </a>
         ))}
-        <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold underline decoration-1 underline-offset-2 hover:text-violet">
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold underline decoration-1 underline-offset-2 hover:text-violet-text">
           GitHub
         </a>
       </span>
@@ -158,7 +158,7 @@ export function Layout() {
                 className={({ isActive }) =>
                   cx(
                     "shrink-0 rounded-[8px] border-2 px-3 py-1 text-sm font-semibold",
-                    isActive ? "border-ink bg-violet text-paper" : "border-transparent text-ink hover:border-ink",
+                    isActive ? "border-ink bg-violet text-on-violet" : "border-transparent text-ink hover:border-ink",
                   )
                 }
               >

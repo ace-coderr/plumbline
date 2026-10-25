@@ -60,7 +60,7 @@ const COLS = STATIC
 function PairName({ m }: { m: MarketSummary }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <Link to={`/market/${m.pair}`} className="num font-bold text-ink underline decoration-2 underline-offset-4 hover:text-violet">
+      <Link to={`/market/${m.pair}`} className="num font-bold text-ink underline decoration-2 underline-offset-4 hover:text-violet-text">
         {m.base.symbol}/{m.quote.symbol}
       </Link>
       {(m.quote.demo || m.base.demo) && <DemoTag />}

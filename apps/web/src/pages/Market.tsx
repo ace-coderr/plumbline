@@ -464,7 +464,7 @@ export function MarketPage() {
                 ["Backed", "the vault holds the base and quote it advertises, by balanceOf, net of queued withdrawals"],
               ].map(([k, v], i) => (
                 <li key={k} className="flex gap-2">
-                  <span className="num font-bold text-violet">{i + 1}</span>
+                  <span className="num font-bold text-violet-text">{i + 1}</span>
                   <span>
                     <span className="font-semibold text-ink">{k}</span> {v}
                   </span>

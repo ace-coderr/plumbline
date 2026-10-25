@@ -24,7 +24,7 @@ function Ext({ href, children }: { href: string; children: React.ReactNode }) {
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <section className="grid gap-3 border-t-2 border-ink pt-5 sm:grid-cols-[56px_minmax(0,1fr)]">
-      <div className="num text-3xl font-bold leading-none text-violet">{n}</div>
+      <div className="num text-3xl font-bold leading-none text-violet-text">{n}</div>
       <div className="min-w-0">
         <h2 className="font-display text-2xl font-extrabold tracking-display">{title}</h2>
         <div className="mt-2 max-w-3xl space-y-3 text-base leading-7">{children}</div>

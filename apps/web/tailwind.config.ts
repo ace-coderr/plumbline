@@ -17,9 +17,12 @@ export const palette = {
   success: "#2E9E6B",
   danger: "#D94F3D",
   muted: "#6B6257", // secondary text on cream
-  // Small green/red text on bg or paper; success/danger stay for fills, bars and borders.
+  // AA-grade tones: small green/red text on bg or paper, and the fill of small labels (badges) whose
+  // text sits on them. success/danger stay for chart bars, large fills and borders.
   "success-text": "#167A49",
   "danger-text": "#C0392B",
+  "violet-text": "#6D4AE0", // violet text and links; same as violet in light
+  "on-violet": "#FFFCF5", // text on a violet fill
 } as const;
 
 /** Dark-theme values, mirrored as CSS variables in src/index.css. */
@@ -34,6 +37,8 @@ export const darkPalette = {
   muted: "#9A8F7D",
   "success-text": "#4FD08F",
   "danger-text": "#F2765F",
+  "violet-text": "#A48BF5", // lifted further than violet so small text clears 4.5:1 on charcoal
+  "on-violet": "#0F0D0A", // near-black on the violet fill
 } as const;
 
 type Token = keyof typeof palette;

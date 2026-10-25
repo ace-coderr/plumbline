@@ -200,7 +200,7 @@ export function ReportPage() {
           <div className="rounded-[7px] border border-ink px-5 py-7 sm:px-10 sm:py-10">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="label text-violet">Verified depth report</div>
+                <div className="label text-violet-text">Verified depth report</div>
                 <h1 className="display mt-2 text-[40px] leading-[0.95] sm:text-[60px]">
                   <span className="num">{r.token.symbol}</span>
                   <span className="text-muted"> / </span>
@@ -356,12 +356,12 @@ export function ReportPage() {
         <footer className="mt-6 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
           <span className="num">Elysium testnet · chain {deployment.chainId}</span>
           {(["campaigns", "factory", "router"] as const).map((k) => (
-            <a key={k} href={addressUrl(r.contracts[k])} target="_blank" rel="noreferrer" className="num hover:text-violet">
+            <a key={k} href={addressUrl(r.contracts[k])} target="_blank" rel="noreferrer" className="num hover:text-violet-text">
               {k} {short(r.contracts[k], 6)}
             </a>
           ))}
           <span className="num">generated {dateTime(r.generatedAt)}</span>
-          <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold text-ink underline decoration-1 underline-offset-2 hover:text-violet">
+          <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold text-ink underline decoration-1 underline-offset-2 hover:text-violet-text">
             GitHub
           </a>
         </footer>

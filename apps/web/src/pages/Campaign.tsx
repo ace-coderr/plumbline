@@ -165,7 +165,7 @@ export function CampaignPage() {
                       <Td right mono>
                         {r.medianSpreadBps === null ? "—" : `${r.medianSpreadBps} bps`}
                       </Td>
-                      <Td right mono className="text-violet">
+                      <Td right mono className="text-violet-text">
                         {reward(r.earned)}
                       </Td>
                       <Td right mono className={BigInt(r.bond) < BigInt(c.makerBond) ? "text-danger-text" : "text-ink"}>
@@ -210,7 +210,7 @@ export function CampaignPage() {
                     <Td right mono>
                       {e.totalPoints}
                     </Td>
-                    <Td right mono className="text-violet">
+                    <Td right mono className="text-violet-text">
                       {reward(e.makerPot)}
                     </Td>
                     <Td right mono className="text-muted">

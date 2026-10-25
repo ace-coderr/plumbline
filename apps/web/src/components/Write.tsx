@@ -24,7 +24,7 @@ export function WriteNotice({ className = "", compact = false }: { className?: s
       <p className="mt-1">
         Data shown is a snapshot at block{" "}
         {block ? (
-          <a href={blockUrl(block)} target="_blank" rel="noreferrer" className="num font-semibold underline decoration-2 underline-offset-2 hover:text-violet">
+          <a href={blockUrl(block)} target="_blank" rel="noreferrer" className="num font-semibold underline decoration-2 underline-offset-2 hover:text-violet-text">
             #{fmtInt(block)}
           </a>
         ) : (

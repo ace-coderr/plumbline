@@ -99,7 +99,7 @@ export function EconomicsPage() {
       </StatRow>
 
       <section className="rounded-card border-2 border-ink bg-paper p-5 shadow-brut sm:p-7">
-        <div className="label text-violet">The argument that does not depend on price</div>
+        <div className="label text-violet-text">The argument that does not depend on price</div>
         <p className="mt-3 font-display text-2xl font-extrabold leading-tight tracking-display sm:text-3xl">
           A {maxAge}-second quote gets <N>{ely.window}</N> chances to be re-stamped on Elysium and <N>{alt.window}</N> on a{" "}
           {fmtNum(alt.blockMs, 0)}ms chain.

@@ -244,7 +244,7 @@ export function NewCampaignPage() {
             ))}
           </dl>
           {derived.errors.length > 0 && (
-            <ul className="mt-4 space-y-1 rounded-[8px] border-2 border-ink bg-danger px-3 py-2 text-xs font-semibold text-paper">
+            <ul className="mt-4 space-y-1 rounded-[8px] border-2 border-ink bg-danger-text px-3 py-2 text-xs font-semibold text-paper">
               {derived.errors.map((e) => (
                 <li key={e}>{e}</li>
               ))}
