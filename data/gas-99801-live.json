@@ -558,5 +558,77 @@
     "gasPriceWei": "100000000",
     "costWei": "16527700000000",
     "from": "0xA12c18aF4faA2aA266Ac705Ad1D6E1A644Ff32C3"
+  },
+  {
+    "action": "mint PLUMBUSD",
+    "hash": "0x984d810c06d243f71d617b0cc939607e457bdae774ed446e74960225facdd6e1",
+    "gasUsed": 53139,
+    "gasPriceWei": "100000000",
+    "costWei": "5313900000000",
+    "from": "0x2465E835FAB3B9F07d6478177416611D11F46E03"
+  },
+  {
+    "action": "mint PLUMBUSD",
+    "hash": "0x104eedc21f759f09b26b871f762b604ab0add7a241785b3ca6c1ace03592becf",
+    "gasUsed": 53139,
+    "gasPriceWei": "100000000",
+    "costWei": "5313900000000",
+    "from": "0x2465E835FAB3B9F07d6478177416611D11F46E03"
+  },
+  {
+    "action": "mint PLUMBUSD",
+    "hash": "0xa971246fb6910d3cc8fd961d3f6c1a85095dffc2bf54799e3e350ae0660e881b",
+    "gasUsed": 53139,
+    "gasPriceWei": "100080000",
+    "costWei": "5318151120000",
+    "from": "0x2465E835FAB3B9F07d6478177416611D11F46E03"
+  },
+  {
+    "action": "approve",
+    "hash": "0xb4237da7a44ccfcc8fd80107ad77d350a58a76d468ceb92b8a4de3b9bd310a78",
+    "gasUsed": 45930,
+    "gasPriceWei": "100000000",
+    "costWei": "4593000000000",
+    "from": "0x2465E835FAB3B9F07d6478177416611D11F46E03"
+  },
+  {
+    "action": "openCampaign",
+    "hash": "0xf20806f3d9eed0064d759d188672098e3a79c5187c1e3332627a6ddd328d6947",
+    "gasUsed": 347447,
+    "gasPriceWei": "100000000",
+    "costWei": "34744700000000",
+    "from": "0x2465E835FAB3B9F07d6478177416611D11F46E03"
+  },
+  {
+    "action": "approve",
+    "hash": "0xed20c0c8e7fa600ae3d3b97e39eaaf97ee5e269093424e32691a51b2dd8725e6",
+    "gasUsed": 45930,
+    "gasPriceWei": "100030000",
+    "costWei": "4594377900000",
+    "from": "0xE071a74989784bce375af084069C3aB9b8D872eF"
+  },
+  {
+    "action": "register + bond",
+    "hash": "0xa4674725499bb6c7a605c3ac5b45b59312280ff2371153e478d32b32c603ceff",
+    "gasUsed": 199477,
+    "gasPriceWei": "100060000",
+    "costWei": "19959668620000",
+    "from": "0xE071a74989784bce375af084069C3aB9b8D872eF"
+  },
+  {
+    "action": "approve",
+    "hash": "0x37dd6f8006ccde28ab3f5bc89c54546d6a9ebc17ecab885182f8065890cdc47b",
+    "gasUsed": 45930,
+    "gasPriceWei": "100000000",
+    "costWei": "4593000000000",
+    "from": "0xA12c18aF4faA2aA266Ac705Ad1D6E1A644Ff32C3"
+  },
+  {
+    "action": "register + bond",
+    "hash": "0x86b185f9347451e5708b251ccd8ed28f0a43634c8f37f303e7dc6f9248da6944",
+    "gasUsed": 182377,
+    "gasPriceWei": "100040000",
+    "costWei": "18244995080000",
+    "from": "0xA12c18aF4faA2aA266Ac705Ad1D6E1A644Ff32C3"
   }
 ]
