@@ -5,7 +5,7 @@ import { REPO_URL, addressUrl, deployment, elysiumTestnet } from "@plumbline/sha
 import { STATIC, useCampaigns, useHealth, useKeeper, useMarkets } from "../lib/api";
 import { SnapshotStamp, useNow } from "./Snapshot";
 import { dateTime, fmtInt, short } from "../lib/format";
-import { liveCounts } from "@plumbline/shared";
+import { campaignSources, liveCounts } from "@plumbline/shared";
 import { useLive } from "../lib/liveStore";
 import { Wordmark } from "./Brand";
 import { ThemeToggle } from "./ThemeToggle";
@@ -98,6 +98,7 @@ export function WalletButton() {
 }
 
 function StatusBar() {
+  const legacy = campaignSources.find((s) => s.version === "v1");
   const health = useHealth();
   const keeper = useKeeper();
   const markets = useMarkets();
@@ -158,6 +159,17 @@ function StatusBar() {
             {c} {short(deployment.contracts[c], 4)}
           </a>
         ))}
+        {legacy && (
+          <a
+            href={addressUrl(legacy.campaigns)}
+            target="_blank"
+            rel="noreferrer"
+            className="num hidden hover:text-violet-text xl:inline"
+            title="The first campaigns contract (v1, legacy) on the Elysium explorer"
+          >
+            v1 legacy {short(legacy.campaigns, 4)}
+          </a>
+        )}
         <a href={REPO_URL} target="_blank" rel="noreferrer" className="num font-semibold underline decoration-1 underline-offset-2 hover:text-violet-text">
           GitHub
         </a>

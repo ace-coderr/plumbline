@@ -1,5 +1,5 @@
 import { Bar, CartesianGrid, ComposedChart, LabelList, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { failLabels, txUrl, type EpochUptime, type ProbeView, type UptimeBucket } from "@plumbline/shared";
+import { campaignLabel, failLabels, txUrl, type EpochUptime, type ProbeView, type UptimeBucket } from "@plumbline/shared";
 import { dateTime, fmtPct, utcWindow } from "../lib/format";
 import { themed as color } from "../../tailwind.config";
 
@@ -185,7 +185,7 @@ export function EpochGrid({ epochs }: { epochs: EpochUptime[] }) {
           return (
             <div key={id}>
               <div className="num text-xs font-semibold">
-                Campaign #{id}
+                Campaign {campaignLabel(id)}
                 {first && last && (
                   <span className="font-normal text-muted">
                     {" "}

@@ -5,6 +5,8 @@ import { useAccount, useSignMessage } from "wagmi";
 import {
   blockUrl,
   buildReport,
+  campaignLabel,
+  campaignPath,
   signingMessage,
   withSignature,
   type CampaignView,
@@ -408,8 +410,8 @@ function Result({ data }: { data: VaultScorecardData }) {
                         return (
                           <tr key={`${e.campaignId}-${e.epoch}`}>
                             <Td mono>
-                              <Link to={`/campaign/${e.campaignId}`} className="link">
-                                #{e.campaignId}
+                              <Link to={campaignPath(e.campaignId)} className="link">
+                                {campaignLabel(e.campaignId)}
                               </Link>
                             </Td>
                             <Td mono>e{e.epoch}</Td>
@@ -445,7 +447,7 @@ function Result({ data }: { data: VaultScorecardData }) {
                   <tbody>
                     {f.slashes.map((s) => (
                       <tr key={s.txHash}>
-                        <Td mono>#{s.campaignId}</Td>
+                        <Td mono>{campaignLabel(s.campaignId)}</Td>
                         <Td right mono className="text-danger-text">
                           {slashText(s, campaigns)}
                         </Td>
@@ -585,8 +587,8 @@ export function ScorecardPage() {
                 {q.data.campaigns.map((id, i) => (
                   <span key={id}>
                     {i > 0 && ", "}
-                    <Link to={`/campaign/${id}`} className="link">
-                      #{id}
+                    <Link to={campaignPath(id)} className="link">
+                      {campaignLabel(id)}
                     </Link>
                   </span>
                 ))}

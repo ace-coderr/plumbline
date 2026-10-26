@@ -44,7 +44,7 @@ export interface LiveState {
 
 const POLL_MS = 15_000;
 const REORG_MARGIN = 24;
-const CACHE_KEY = "live-events-v1";
+const CACHE_KEY = "live-events-v2";
 
 interface Cache {
   snapshotBlock: number;

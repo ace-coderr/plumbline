@@ -5,12 +5,17 @@ import { useAccount, useReadContract, useReadContracts, useWriteContract } from 
 import { waitForTransactionReceipt } from "wagmi/actions";
 import {
   MEASURED_GAS,
+  campaignLabel,
+  campaignPath,
+  campaignSources,
   deployment,
   elysiumTestnet,
+  hasLegacy,
   knownTokens,
   plumbCampaignsAbi,
   plumbQuoteAbi,
   plumbQuoteFactoryAbi,
+  resolveCampaign,
   spreadBps,
   toPx,
   type CampaignView,
@@ -368,7 +373,7 @@ function VaultConsole({ vault, campaigns }: { vault: Address; campaigns: Campaig
                   <option value="">choose…</option>
                   {pairCampaigns.map((c) => (
                     <option key={c.id} value={c.id}>
-                      #{c.id} · {fmtAmt(c.rewardPerEpoch, c.rewardDecimals, 2)} {c.rewardSymbol}/epoch · bond {fmtAmt(c.makerBond, c.rewardDecimals, 2)}
+                      {campaignLabel(c.id)} · {fmtAmt(c.rewardPerEpoch, c.rewardDecimals, 2)} {c.rewardSymbol}/epoch · bond {fmtAmt(c.makerBond, c.rewardDecimals, 2)}
                     </option>
                   ))}
                 </Select>
@@ -377,6 +382,7 @@ function VaultConsole({ vault, campaigns }: { vault: Address; campaigns: Campaig
                 const c = pairCampaigns.find((x) => String(x.id) === campaignId);
                 if (!c) return null;
                 const native = c.rewardToken === zeroAddress;
+                const { source, localId } = resolveCampaign(c.id);
                 const steps: Step[] = [];
                 if (!native) {
                   steps.push({
@@ -386,7 +392,7 @@ function VaultConsole({ vault, campaigns }: { vault: Address; campaigns: Campaig
                         address: c.rewardToken,
                         abi: erc20Abi,
                         functionName: "approve",
-                        args: [deployment.contracts.campaigns, BigInt(c.makerBond)],
+                        args: [source.campaigns, BigInt(c.makerBond)],
                       }),
                   });
                 }
@@ -394,10 +400,10 @@ function VaultConsole({ vault, campaigns }: { vault: Address; campaigns: Campaig
                   label: "register",
                   send: () =>
                     writeContractAsync({
-                      address: deployment.contracts.campaigns,
+                      address: source.campaigns,
                       abi: plumbCampaignsAbi,
                       functionName: "register",
-                      args: [BigInt(c.id), vault],
+                      args: [BigInt(localId), vault],
                       value: native ? BigInt(c.makerBond) : 0n,
                     }),
                 });
@@ -420,10 +426,10 @@ function VaultConsole({ vault, campaigns }: { vault: Address; campaigns: Campaig
                               label: "request unbond",
                               send: () =>
                                 writeContractAsync({
-                                  address: deployment.contracts.campaigns,
+                                  address: source.campaigns,
                                   abi: plumbCampaignsAbi,
                                   functionName: "requestUnbond",
-                                  args: [BigInt(c.id), vault],
+                                  args: [BigInt(localId), vault],
                                 }),
                             },
                           ])
@@ -440,10 +446,10 @@ function VaultConsole({ vault, campaigns }: { vault: Address; campaigns: Campaig
                               label: "release bond",
                               send: () =>
                                 writeContractAsync({
-                                  address: deployment.contracts.campaigns,
+                                  address: source.campaigns,
                                   abi: plumbCampaignsAbi,
                                   functionName: "releaseBond",
-                                  args: [BigInt(c.id), vault],
+                                  args: [BigInt(localId), vault],
                                 }),
                             },
                           ])
@@ -469,9 +475,11 @@ function Claimables({ campaigns }: { campaigns: CampaignView[] }) {
   const { writeContractAsync } = useWriteContract();
   const tx = useTxRunner();
   const rewardTokens = [...new Map(campaigns.map((c) => [c.rewardToken, c])).values()];
+  // Rewards accrue per campaigns contract, so each reward token is read on v1 and on v2.
+  const rows = rewardTokens.flatMap((c) => campaignSources.map((source) => ({ c, source })));
   const reads = useReadContracts({
-    contracts: rewardTokens.map((c) => ({
-      address: deployment.contracts.campaigns,
+    contracts: rows.map(({ c, source }) => ({
+      address: source.campaigns,
       abi: plumbCampaignsAbi,
       functionName: "claimable" as const,
       args: [c.rewardToken, address ?? zeroAddress] as const,
@@ -484,12 +492,15 @@ function Claimables({ campaigns }: { campaigns: CampaignView[] }) {
         <Empty>Nothing yet.</Empty>
       ) : (
         <div className="space-y-2">
-          {rewardTokens.map((c, i) => {
+          {rows.map(({ c, source }, i) => {
             const amt = (reads.data?.[i]?.result as bigint | undefined) ?? 0n;
+            // The legacy contract only gets a row while something is still claimable on it.
+            if (source.version === "v1" && amt === 0n) return null;
             return (
-              <div key={c.rewardToken} className="flex items-center justify-between">
+              <div key={`${c.rewardToken}-${source.campaigns}`} className="flex items-center justify-between">
                 <span className="num text-sm">
                   {fmtAmt(amt, c.rewardDecimals, 4)} <span className="text-muted">{c.rewardSymbol}</span>
+                  {hasLegacy && <span className="text-muted"> · {source.version === "v1" ? "v1 legacy" : "v2"}</span>}
                 </span>
                 <Button
                   disabled={amt === 0n || tx.busy}
@@ -499,7 +510,7 @@ function Claimables({ campaigns }: { campaigns: CampaignView[] }) {
                         label: `claim ${c.rewardSymbol}`,
                         send: () =>
                           writeContractAsync({
-                            address: deployment.contracts.campaigns,
+                            address: source.campaigns,
                             abi: plumbCampaignsAbi,
                             functionName: "claim",
                             args: [c.rewardToken],
@@ -666,8 +677,8 @@ export function MakerPage() {
                     return (
                       <tr key={`${s.campaignId}-${s.epoch}-${s.vault}`}>
                         <Td mono>
-                          <Link className="link" to={`/campaign/${s.campaignId}`}>
-                            #{s.campaignId}
+                          <Link className="link" to={campaignPath(s.campaignId)}>
+                            {campaignLabel(s.campaignId)}
                           </Link>
                         </Td>
                         <Td mono>e{s.epoch}</Td>
@@ -701,8 +712,8 @@ export function MakerPage() {
                 const c = cs.find((x) => x.id === r.campaignId);
                 return (
                   <div key={`${r.campaignId}-${r.vault}`} className="flex items-center justify-between border-b border-ink py-1.5 font-mono text-2xs">
-                    <Link className="link" to={`/campaign/${r.campaignId}`}>
-                      #{r.campaignId}
+                    <Link className="link" to={campaignPath(r.campaignId)}>
+                      {campaignLabel(r.campaignId)}
                     </Link>
                     <AddrLink address={r.vault} />
                     <span>{c ? `${fmtAmt(r.bond, c.rewardDecimals, 3)} ${c.rewardSymbol}` : r.bond}</span>

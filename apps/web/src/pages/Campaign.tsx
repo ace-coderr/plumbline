@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { useAccount, useWriteContract } from "wagmi";
-import { MEASURED_GAS, deployment, failLabels, plumbCampaignsAbi } from "@plumbline/shared";
+import { MEASURED_GAS, campaignLabel, failLabels, hasLegacy, parseCampaignParam, plumbCampaignsAbi, resolveCampaign, sourceOfId } from "@plumbline/shared";
 import { STATIC, useCampaign } from "../lib/api";
 import { useNow } from "../components/Snapshot";
 import { ago, clock, dateTime, duration, fmtAmt, fmtInt, fmtPct, tone, toneText } from "../lib/format";
@@ -30,7 +30,7 @@ import {
 
 export function CampaignPage() {
   const { id: idParam = "" } = useParams();
-  const id = Number(idParam);
+  const id = parseCampaignParam(idParam) ?? 0;
   const q = useCampaign(id);
   const { address } = useAccount();
   const { writeContractAsync } = useWriteContract();
@@ -44,8 +44,8 @@ export function CampaignPage() {
       <LoadFailed
         error={q.error ?? "unknown campaign"}
         missing={
-          <Missing title={`No campaign #${idParam}`} links={[{ to: "/campaigns", label: "All campaigns" }]}>
-            <p>Campaigns are numbered from 1 in the order they were opened.</p>
+          <Missing title={id ? `No campaign ${campaignLabel(id)}` : `No campaign “${idParam.slice(0, 20)}”`} links={[{ to: "/campaigns", label: "All campaigns" }]}>
+            <p>Campaigns are numbered from 1 in the order they were opened, separately on each contract: v1 (legacy) and v2.</p>
           </Missing>
         }
       />
@@ -64,10 +64,10 @@ export function CampaignPage() {
         label: `settle epoch ${settleable[0]?.epoch ?? ""}`,
         send: () =>
           writeContractAsync({
-            address: deployment.contracts.campaigns,
+            address: resolveCampaign(c.id).source.campaigns,
             abi: plumbCampaignsAbi,
             functionName: "settle",
-            args: [BigInt(c.id)],
+            args: [BigInt(resolveCampaign(c.id).localId)],
           }),
       },
     ]);
@@ -79,8 +79,9 @@ export function CampaignPage() {
         title={
           <span className="inline-flex flex-wrap items-center gap-3">
             <span className="num">
-              Campaign #{c.id} · {c.pair}
+              Campaign {campaignLabel(c.id)} · {c.pair}
             </span>
+            {hasLegacy && sourceOfId(c.id).version === "v1" && <Badge tone="warn">v1 legacy contract</Badge>}
             {(c.quote.demo || c.base.demo) && <DemoTag />}
           </span>
         }

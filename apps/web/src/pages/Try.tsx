@@ -13,6 +13,8 @@ import {
   knownTokens,
   plumbCampaignsAbi,
   plumbQuoteFactoryAbi,
+  campaignLabel,
+  resolveCampaign,
 } from "@plumbline/shared";
 import { wagmiConfig } from "../lib/wagmi";
 import { useLive } from "../lib/liveStore";
@@ -80,10 +82,10 @@ export function TryPage() {
     refetchInterval: 4_000,
     queryFn: async () => ({
       open: await chainClient.readContract({
-        address: deployment.contracts.campaigns,
+        address: resolveCampaign(target?.id ?? 0).source.campaigns,
         abi: plumbCampaignsAbi,
         functionName: "probeGateOpen",
-        args: [BigInt(target?.id ?? 0)],
+        args: [BigInt(resolveCampaign(target?.id ?? 0).localId)],
       }),
       block: await chainClient.getBlockNumber(),
     }),
@@ -127,17 +129,23 @@ export function TryPage() {
     if (!target) return;
     // Ask the chain again right before sending: the gate is open for only a moment.
     const open = await chainClient.readContract({
-      address: deployment.contracts.campaigns,
+      address: resolveCampaign(target.id).source.campaigns,
       abi: plumbCampaignsAbi,
       functionName: "probeGateOpen",
-      args: [BigInt(target.id)],
+      args: [BigInt(resolveCampaign(target.id).localId)],
     });
     await gate.refetch();
     if (!open) return;
     await probeTx.run([
       {
-        label: `probe campaign #${target.id}`,
-        send: () => writeContractAsync({ address: deployment.contracts.campaigns, abi: plumbCampaignsAbi, functionName: "probe", args: [BigInt(target.id)] }),
+        label: `probe campaign ${campaignLabel(target.id)}`,
+        send: () =>
+          writeContractAsync({
+            address: resolveCampaign(target.id).source.campaigns,
+            abi: plumbCampaignsAbi,
+            functionName: "probe",
+            args: [BigInt(resolveCampaign(target.id).localId)],
+          }),
       },
     ]);
   }
@@ -149,7 +157,7 @@ export function TryPage() {
       <PageHeader
         kicker="Hands on"
         title="Try it"
-        sub="Six steps from an empty wallet to a verified probe. Every step is a real testnet transaction; none of it costs anything of value."
+        sub="Six steps from an empty wallet to a probe. Every step is a real testnet transaction; none of it costs anything of value."
       />
       <ol className="mt-8 space-y-4">
         <Step n={1} title="Get testnet HYPE for gas" done={Boolean(address) && hasGas}>
@@ -231,7 +239,7 @@ export function TryPage() {
             </p>
           ) : (
             <p>
-              {running.length} campaign{running.length === 1 ? " is" : "s are"} running: {running.map((c) => `#${c.id}`).join(", ")}. Bonding puts a small
+              {running.length} campaign{running.length === 1 ? " is" : "s are"} running: {running.map((c) => campaignLabel(c.id)).join(", ")}. Bonding puts a small
               deposit behind your vault, slashed if probes catch it failing. Do it on the <Link className="link font-semibold" to="/maker">Maker</Link> page ("Bond into
               a campaign").
             </p>
@@ -259,7 +267,7 @@ export function TryPage() {
                   >
                     {running.map((c) => (
                       <option key={c.id} value={c.id}>
-                        #{c.id}
+                        {campaignLabel(c.id)}
                       </option>
                     ))}
                   </select>
@@ -274,7 +282,7 @@ export function TryPage() {
                   {address ? "Run a probe" : "Connect a wallet"}
                 </Button>
                 <span className="num text-xs text-muted">
-                  gate for #{target?.id}: {!gateKnown ? "reading…" : gate.data?.open ? "OPEN" : "closed"}
+                  gate for {target ? campaignLabel(target.id) : ""}: {!gateKnown ? "reading…" : gate.data?.open ? "OPEN" : "closed"}
                   {gate.data ? ` · block ${gate.data.block.toString()}` : ""}
                 </span>
               </div>
@@ -282,9 +290,14 @@ export function TryPage() {
                 <p className="rounded-[8px] border-2 border-ink bg-highlight px-3 py-2">
                   <strong>The probe gate is closed right now.</strong> It opens when a recent block hash hits, at least {target ? duration(target.terms.minProbeInterval) : "a few seconds"} after the last
                   probe. Nothing is wrong: this page re-reads the gate every few seconds, and the button sends a probe only if the gate is open at that moment.
-                  On the deployed contracts the gate counts the parent chain's block numbers, so it opens about once every two minutes.
+                  It opens at random, on average every few seconds to tens of seconds, and stays open for only about a second, so a probe has to be sent
+                  right after it opens.
                 </p>
               )}
+              <p className="text-xs leading-5 text-muted">
+                Being honest about this step: the gate stays open for about a second, and a browser wallet takes longer than that to confirm, so a probe sent by
+                hand will usually revert with "gate closed" (and cost a little gas). The keeper bot sends probes automatically within that second.
+              </p>
               {gate.isError && <p className="text-danger-text">Could not read the gate from any RPC node. Try again in a moment.</p>}
               {probeTx.state.status === "error" ? <p className="num text-xs text-danger-text">{friendly(probeTx.state.message)}</p> : <TxStatus state={probeTx.state} />}
             </>

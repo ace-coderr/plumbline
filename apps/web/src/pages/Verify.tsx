@@ -6,6 +6,8 @@ import {
   deployment,
   parseReport,
   recomputeFromChain,
+  reportScope,
+  campaignSources,
   type ChainScorecard,
   type FigureKey,
   type ReportChecks,
@@ -194,6 +196,7 @@ export function VerifyPage() {
       const result = await recomputeFromChain(chainClient, {
         vault: report.body.vault,
         asOfBlock: BigInt(report.body.asOfBlock),
+        campaigns: reportScope(report.body.campaignsContract) ?? undefined,
         onProgress: (b) => {
           if (current()) setChain({ kind: "running", fraction: Math.min(1, (Number(b) - from) / span), hash });
         },
@@ -206,7 +209,7 @@ export function VerifyPage() {
 
   const report = parsed?.ok ? parsed.report : null;
   const sameDeployment =
-    report !== null && report.body.chainId === deployment.chainId && eq(report.body.campaignsContract, deployment.contracts.campaigns);
+    report !== null && report.body.chainId === deployment.chainId && reportScope(report.body.campaignsContract) !== null;
   // Only a state started for this very report counts; anything else is ignored, never shown.
   const forThis = report !== null && chain.kind !== "idle" && chain.hash === report.hash;
   const rows = report && parsed?.ok && forThis && chain.kind === "done" ? buildRows(report, parsed.checks, chain.chain) : null;
@@ -308,8 +311,14 @@ export function VerifyPage() {
               <p className="text-sm leading-6 text-danger-text">
                 This report is for chain <span className="num">{report.body.chainId}</span>, contract{" "}
                 <span className="num">{short(report.body.campaignsContract, 6)}</span>. This page checks Elysium testnet (chain{" "}
-                <span className="num">{deployment.chainId}</span>), campaigns contract{" "}
-                <span className="num">{short(deployment.contracts.campaigns, 6)}</span>, so it cannot verify this report.
+                <span className="num">{deployment.chainId}</span>), campaigns contracts{" "}
+                {campaignSources.map((s, i) => (
+                  <span key={s.campaigns}>
+                    {i > 0 && ", "}
+                    <span className="num">{short(s.campaigns, 6)}</span>
+                  </span>
+                ))}
+                , so it cannot verify this report.
               </p>
             ) : (
               <div className="space-y-3">

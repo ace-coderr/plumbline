@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { campaignLabel, campaignPath } from "@plumbline/shared";
 import { useCampaigns } from "../lib/api";
 import { useNow } from "../components/Snapshot";
 import { ago, duration, fmtAmt, fmtInt } from "../lib/format";
@@ -52,8 +53,8 @@ export function CampaignsPage() {
                 return (
                   <tr key={c.id} className="hover:bg-highlight/40">
                     <Td mono>
-                      <Link to={`/campaign/${c.id}`} className="link">
-                        #{c.id}
+                      <Link to={campaignPath(c.id)} className="link">
+                        {campaignLabel(c.id)}
                       </Link>
                     </Td>
                     <Td mono>

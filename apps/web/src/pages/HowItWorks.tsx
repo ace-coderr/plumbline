@@ -251,9 +251,10 @@ export function HowItWorksPage() {
             second before it closes, so in practice its quote has to be fresh and its vault funded all the time.
           </p>
           <p>
-            One caveat about this deployment: on Elysium the EVM's block number follows the parent chain, so the live contracts'
-            gate opened every couple of minutes instead of every few seconds. Still unpredictable, just less frequent. The fix
-            is in the repository and ships with the next deployment (see the README, "Found on Elysium").
+            One thing we found on Elysium: the EVM's block number follows the parent chain, so the first contracts (v1, now
+            legacy) opened their gate only every couple of minutes. The current contracts (v2) read Elysium's own blocks through
+            ArbSys. A short check of v2 saw the gate open 3 times in 70 seconds, and a probe sent just after an opening was too
+            late, so a prober has to land within about a second. See the README, "Found on Elysium".
           </p>
         </Faq>
 

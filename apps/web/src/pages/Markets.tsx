@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { MarketSummary } from "@plumbline/shared";
+import { campaignLabel, campaignPath, type MarketSummary } from "@plumbline/shared";
 import { STATIC, useCampaigns, useEconomics, useMarkets } from "../lib/api";
 import { ago, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, tone, toneText, utcWindow } from "../lib/format";
 import { useNow } from "../components/Snapshot";
@@ -106,9 +106,9 @@ function MarketCard({ m, now }: { m: MarketSummary; now: number }) {
           </span>
         )}
         {m.campaignIds.map((id) => (
-          <Link key={id} to={`/campaign/${id}`}>
+          <Link key={id} to={campaignPath(id)}>
             <Badge tone="none">
-              <N>c{id}</N>
+              <N>{campaignLabel(id)}</N>
             </Badge>
           </Link>
         ))}
@@ -256,9 +256,9 @@ export function MarketsPage() {
                             </span>
                           )}
                           {m.campaignIds.slice(0, 3).map((id) => (
-                            <Link key={id} to={`/campaign/${id}`}>
+                            <Link key={id} to={campaignPath(id)}>
                               <Badge tone="none">
-                                <N>c{id}</N>
+                                <N>{campaignLabel(id)}</N>
                               </Badge>
                             </Link>
                           ))}

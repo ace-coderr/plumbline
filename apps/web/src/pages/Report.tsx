@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { DEPLOYED_SOURCE_TAG, REPO_URL, addressUrl, deployedSourceUrl, deployment, SNAPSHOT_WINDOW, type DepthReport } from "@plumbline/shared";
+import { campaignLabel, DEPLOYED_SOURCE_TAG, REPO_URL, addressUrl, deployedSourceUrl, deployment, SNAPSHOT_WINDOW, type DepthReport } from "@plumbline/shared";
 import { STATIC, useCampaign, useMarkets, useReport, useReportProbes } from "../lib/api";
 import { LoadFailed, Missing } from "../components/Missing";
 import { dateTime, duration, fmtAmt, fmtInt, fmtPct, short, tone, toneText, utcWindow } from "../lib/format";
@@ -237,7 +237,7 @@ export function ReportPage() {
               <DepthFigures r={r} />
               <Figure label="Probes" value={fmtInt(r.probes)} sub={<><N>{fmtInt(r.vaultChecks)}</N> individual vault checks</>} />
               <Figure label="Makers probed" value={fmtInt(r.makers)} sub="distinct vault owners" />
-              <Figure label="Campaigns" value={r.campaigns.map((c) => `#${c}`).join(" ") || "—"} sub="funding the probes" />
+              <Figure label="Campaigns" value={r.campaigns.map((c) => campaignLabel(c)).join(" ") || "—"} sub="funding the probes" />
             </div>
 
             {firstCampaign !== undefined && (
@@ -300,7 +300,7 @@ export function ReportPage() {
                       <tr key={`${p.campaignId}-${p.nonce}`}>
                         <Td mono>{dateTime(p.ts)}</Td>
                         <Td right mono>
-                          #{p.campaignId}.{p.nonce}
+                          {campaignLabel(p.campaignId)}.{p.nonce}
                         </Td>
                         <Td right mono>
                           {p.passed}/{p.checked}

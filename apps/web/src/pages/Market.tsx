@@ -4,6 +4,8 @@ import { erc20Abi, parseUnits, type Address } from "viem";
 import { useAccount, useReadContract, useWriteContract } from "wagmi";
 import {
   FillStatus,
+  campaignLabel,
+  campaignPath,
   deployment,
   plumbRouterAbi,
   quoteNotional,
@@ -299,9 +301,9 @@ export function MarketPage() {
               </Button>
             )}
             {m.campaignIds.map((id) => (
-              <Link key={id} to={`/campaign/${id}`}>
+              <Link key={id} to={campaignPath(id)}>
                 <Button>
-                  Campaign <span className="num">#{id}</span>
+                  Campaign <span className="num">{campaignLabel(id)}</span>
                 </Button>
               </Link>
             ))}

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { decodeEventLog, erc20Abi, parseUnits, zeroAddress, type Address } from "viem";
 import { useAccount, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { MEASURED_GAS, deployment, knownTokens, plumbCampaignsAbi } from "@plumbline/shared";
+import { MEASURED_GAS, campaignLabel, campaignPath, currentSource, deployment, knownTokens, plumbCampaignsAbi } from "@plumbline/shared";
 import { wagmiConfig } from "../lib/wagmi";
 import { useTxRunner } from "../lib/tx";
 import { getLive, refreshLive } from "../lib/liveStore";
@@ -142,9 +142,9 @@ export function NewCampaignPage() {
         try {
           const e = decodeEventLog({ abi: plumbCampaignsAbi, data: l.data, topics: l.topics });
           if (e.eventName === "CampaignOpened") {
-            const id = e.args.id.toString();
+            const id = String(currentSource.idBase + Number(e.args.id));
             if (!STATIC) {
-              nav(`/campaign/${id}`);
+              nav(campaignPath(id));
               return;
             }
             // The page reads the chain: look now, and wait until the node shows the campaign (a node
@@ -152,7 +152,7 @@ export function NewCampaignPage() {
             for (let attempt = 0; attempt < 6; attempt++) {
               await refreshLive().catch(() => undefined);
               if (getLive().data.views?.campaigns.some((c) => String(c.id) === id)) {
-                nav(`/campaign/${id}`);
+                nav(campaignPath(id));
                 return;
               }
               await new Promise((r) => setTimeout(r, 1_500));
@@ -296,7 +296,7 @@ export function NewCampaignPage() {
           {opened && (
             <div className="mt-3 rounded-[8px] border-2 border-ink bg-highlight px-3 py-2.5 text-sm leading-6">
               <div className="font-bold">
-                Campaign <span className="num">#{opened.id}</span> is open on-chain.
+                Campaign <span className="num">{campaignLabel(opened.id)}</span> is open on-chain.
               </div>
               <p>
                 Opened in <TxLink hash={opened.hash} />. Makers can bond into it and anyone can probe it now. The chain could not be read
