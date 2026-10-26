@@ -13,6 +13,7 @@
 import { erc20Abi, getAddress, parseEventLogs, zeroAddress, type Hex, type PublicClient } from "viem";
 import { plumbCampaignsAbi } from "./abis/PlumbCampaigns.js";
 import { plumbQuoteAbi } from "./abis/PlumbQuote.js";
+import { plumbRouterAbi } from "./abis/PlumbRouter.js";
 import { plumbQuoteFactoryAbi } from "./abis/PlumbQuoteFactory.js";
 import { deployment } from "./addresses.js";
 import { scanRange, type ScanOptions } from "./chainScorecard.js";
@@ -93,6 +94,8 @@ export interface ChainViews {
   vaultCount: number;
   vaults: ChainVault[];
   tokens: Record<string, TokenMeta>;
+  /** Mean milliseconds per block over the last 200,000 blocks, from two block timestamps; null if the chain is younger. */
+  avgBlockMs: number | null;
   /** Anything beyond these caps was not read, and the counts above say how many there are. */
   capped: { campaigns: boolean; vaults: boolean };
 }
@@ -126,7 +129,8 @@ export async function readChainViews(client: PublicClient): Promise<ChainViews> 
   const refs = campaignSources.flatMap((s, si) =>
     Array.from({ length: Math.min(num(counts[si] as bigint), MAX_CAMPAIGNS) }, (_, i) => ({ source: s, local: i + 1, id: s.idBase + i + 1 })),
   );
-  const [campaignReads, vaultAddrReads] = await Promise.all([
+  const back = head > 201_000 ? 200_000 : 0;
+  const [campaignReads, vaultAddrReads, past] = await Promise.all([
     client.multicall({
       allowFailure: true,
       contracts: refs.flatMap((r) => [
@@ -138,6 +142,7 @@ export async function readChainViews(client: PublicClient): Promise<ChainViews> 
       allowFailure: true,
       contracts: Array.from({ length: nVaults }, (_, i) => ({ address: FACTORY, abi: plumbQuoteFactoryAbi, functionName: "vaultAt", args: [BigInt(i)] }) as const),
     }),
+    back ? client.getBlock({ blockNumber: BigInt(head - back) }) : Promise.resolve(null),
   ]);
   const campaigns: ChainCampaign[] = refs.map(({ id }, i) => {
     const t = ok(campaignReads[i * 2] as never, `campaign ${id} terms`) as {
@@ -251,6 +256,7 @@ export async function readChainViews(client: PublicClient): Promise<ChainViews> 
     vaultCount: num(vaultCount),
     vaults,
     tokens,
+    avgBlockMs: past ? Math.round(((headTs - num(past.timestamp)) * 1000) / back) : null,
     capped: { campaigns: capped, vaults: num(vaultCount) > MAX_VAULTS },
   };
 }
@@ -326,6 +332,91 @@ export async function scanCampaignEvents(client: PublicClient, from: bigint, to:
       args.id = String(appId);
     }
     out.push({ name: name as LiveEventName, block: num(l.blockNumber), logIndex: l.logIndex, txHash: l.transactionHash, args });
+  }
+  return out;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Fills
+// -------------------------------------------------------------------------------------------------
+
+/** A vault `Filled` event: one fill of one vault quote. */
+export interface LiveFill {
+  txHash: Hex;
+  block: number;
+  logIndex: number;
+  vault: Address;
+  taker: Address;
+  buyingBase: boolean;
+  amountIn: string;
+  amountOut: string;
+  px: string;
+}
+
+/** A router `FillFailed` event: a vault whose quote looked fillable reverted. */
+export interface LiveFailedFill {
+  txHash: Hex;
+  block: number;
+  logIndex: number;
+  vault: Address;
+  taker: Address;
+  amountIn: string;
+  status: number;
+  penalized: boolean;
+}
+
+const filledEvent = plumbQuoteAbi.find((x) => x.type === "event" && x.name === "Filled");
+const fillFailedEvent = plumbRouterAbi.find((x) => x.type === "event" && x.name === "FillFailed");
+
+/**
+ * Fills and failed fills in [from, to]: `Filled` from the given vaults and `FillFailed` from the given
+ * routers. Both are filtered by event, so the busy quote updates of a vault are never fetched.
+ */
+export async function scanFills(
+  client: PublicClient,
+  from: bigint,
+  to: bigint,
+  vaults: Address[],
+  routers: Address[],
+  opts: ScanOptions = {},
+): Promise<{ fills: LiveFill[]; failed: LiveFailedFill[] }> {
+  if (!filledEvent || !fillFailedEvent) throw new Error("Filled or FillFailed is missing from the ABIs");
+  const scan = { chunk: 1_000_000n, minChunk: 2_000n, ...opts };
+  const fills = vaults.length
+    ? await scanRange(from, to, (a, b) => client.getLogs({ address: vaults, event: filledEvent as never, fromBlock: a, toBlock: b }), scan)
+    : [];
+  const failed = routers.length
+    ? await scanRange(from, to, (a, b) => client.getLogs({ address: routers, event: fillFailedEvent as never, fromBlock: a, toBlock: b }), scan)
+    : [];
+  const out = { fills: [] as LiveFill[], failed: [] as LiveFailedFill[] };
+  for (const l of parseEventLogs({ abi: plumbQuoteAbi, logs: fills as never, strict: false })) {
+    if (l.eventName !== "Filled" || l.blockNumber === null || l.logIndex === null || l.transactionHash === null) continue;
+    const a = l.args as { taker: Address; buyingBase: boolean; amountIn: bigint; amountOut: bigint; px: bigint };
+    out.fills.push({
+      txHash: l.transactionHash,
+      block: num(l.blockNumber),
+      logIndex: l.logIndex,
+      vault: getAddress(l.address) as Address,
+      taker: getAddress(a.taker) as Address,
+      buyingBase: a.buyingBase,
+      amountIn: a.amountIn.toString(),
+      amountOut: a.amountOut.toString(),
+      px: a.px.toString(),
+    });
+  }
+  for (const l of parseEventLogs({ abi: plumbRouterAbi, logs: failed as never, strict: false })) {
+    if (l.eventName !== "FillFailed" || l.blockNumber === null || l.logIndex === null || l.transactionHash === null) continue;
+    const a = l.args as { vault: Address; taker: Address; amountIn: bigint; status: number; penalized: boolean };
+    out.failed.push({
+      txHash: l.transactionHash,
+      block: num(l.blockNumber),
+      logIndex: l.logIndex,
+      vault: getAddress(a.vault) as Address,
+      taker: getAddress(a.taker) as Address,
+      amountIn: a.amountIn.toString(),
+      status: Number(a.status),
+      penalized: a.penalized,
+    });
   }
   return out;
 }

@@ -69,7 +69,7 @@ function views(over: Partial<ChainViews> = {}): ChainViews {
   return {
     head: 16_200_000, headTs: T0, campaignCount: 3, campaigns, vaultCount: vaults.length, vaults,
     tokens: { [WHYPE.address.toLowerCase()]: { symbol: "WHYPE", decimals: 18 }, [PLUMBUSD.address.toLowerCase()]: { symbol: "PLUMBUSD", decimals: 6 } },
-    capped: { campaigns: false, vaults: false }, ...over,
+    avgBlockMs: null, capped: { campaigns: false, vaults: false }, ...over,
   };
 }
 
@@ -83,7 +83,7 @@ const settled = log("EpochSettled", 16_136_000, 0, { id: "3", epoch: "0", makerP
 const times = { 16_134_623: T0 - 650, 16_134_700: T0 - 640, 16_135_000: T0 - 600, 16_136_000: T0 - 300 };
 
 const liveData = (over: Partial<LiveData> = {}): LiveData => ({
-  views: views(), events: [], blockTimes: times, snapshotBlock: SNAPSHOT_BLOCK, scannedThrough: 16_200_000, scanComplete: true, ...over,
+  views: views(), events: [], blockTimes: times, fills: [], failedFills: [], historyFrom: SNAPSHOT_BLOCK + 1, snapshotBlock: SNAPSHOT_BLOCK, scannedThrough: 16_200_000, scanComplete: true, ...over,
 });
 
 describe("mergeCampaigns", () => {
@@ -242,7 +242,7 @@ describe("liveCounts, chainNow, mergeEconomics", () => {
 
   it("adds probes since the snapshot to the economics probe count only", () => {
     const e = read<import("../src/api.js").EconomicsResponse>("economics.json");
-    const m = mergeEconomics(e, liveData({ events: [probed] }))!;
+    const m = mergeEconomics(e, liveData({ events: [probed] }), T0)!;
     assert.equal(m.totalProbes, e.totalProbes + 1);
     assert.equal(m.probeGasAvg, e.probeGasAvg);
   });

@@ -4,8 +4,10 @@
  * shape out. The rules:
  *
  *  - Current state (campaign state, every vault and its quote) is replaced by the chain's view.
- *  - History after the snapshot block (probes, registrations, slashes, settlements) is applied from
- *    events; history before it stays the snapshot's.
+ *  - Once the browser holds the whole event history (see `historyComplete`), every figure the events
+ *    can give is worked out from them (derive.ts) and the snapshot only supplies what events cannot
+ *    (gas, fills, sampled counts). Until then, history after the snapshot block is applied from events
+ *    on top of the snapshot's, and history before it stays the snapshot's.
  *  - Nothing is guessed. A figure that needs data not read is left as the snapshot had it, and the
  *    callers say so.
  */
@@ -16,6 +18,8 @@ import type {
   DepthReport,
   EconomicsResponse,
   EpochView,
+  FailedFillView,
+  FillView,
   Hash,
   LeaderboardRow,
   MakerProfile,
@@ -26,20 +30,42 @@ import type {
   ProbeView,
   QuoteView,
   RegistrationView,
+  UptimeResponse,
 } from "./api.js";
 import type { VaultProbeRow, VaultScorecardData, VaultSlash } from "./scorecard.js";
-import type { ChainCampaign, ChainVault, ChainViews, LiveLog, TokenMeta } from "./liveReader.js";
+import type { ChainCampaign, ChainVault, ChainViews, LiveFailedFill, LiveFill, LiveLog, TokenMeta } from "./liveReader.js";
 import { isDemoToken, type Address, type TokenRef } from "./pairs.js";
 import { quoteNotional, spreadBps } from "./score.js";
+import {
+  deriveCampaignDetail,
+  deriveMakerScores,
+  deriveMarket,
+  deriveProbeLog,
+  deriveProbeTotals,
+  deriveRegistrations,
+  deriveReport,
+  deriveUptime,
+  gasIndex,
+  historyComplete,
+  ledgerOf,
+  withVaultUptime,
+} from "./derive.js";
+import { currentSource } from "./campaignIds.js";
+import { deployment } from "./addresses.js";
 
 /** What the browser knows from the chain. `views` null means nothing has been read yet. */
 export interface LiveData {
   views: ChainViews | null;
-  /** Campaigns-contract events in (snapshotBlock, scannedThrough]. */
+  /** Campaigns-contract events in [historyFrom, scannedThrough]. */
   events: LiveLog[];
+  /** The block the event history starts at: the first campaigns contract's deploy block when it is complete. */
+  historyFrom: number;
   blockTimes: Record<number, number>;
+  /** Vault fills and router failed fills after the snapshot block, read through `scannedThrough`. */
+  fills: LiveFill[];
+  failedFills: LiveFailedFill[];
   snapshotBlock: number;
-  /** Events are complete through this block (the snapshot block until the first scan chunk lands). */
+  /** Events are complete through this block (just before `historyFrom` until the first scan chunk lands). */
   scannedThrough: number;
   /** True once the scan has reached the head the views were read at. */
   scanComplete: boolean;
@@ -76,6 +102,14 @@ function rewardMeta(live: LiveData, token: string): { symbol: string; decimals: 
   if (token === zeroAddress) return { symbol: "HYPE", decimals: 18 };
   const m = live.views?.tokens[lc(token)];
   return { symbol: m?.symbol ?? `${token.slice(0, 6)}…`, decimals: m?.decimals ?? 18 };
+}
+
+/**
+ * The same data with only the events after the snapshot block: what the snapshot-plus-delta merges
+ * below apply on top of the snapshot. Used until the whole history is held.
+ */
+function delta(live: LiveData): LiveData {
+  return { ...live, events: live.events.filter((e) => e.block > live.snapshotBlock) };
 }
 
 /** The event time: the block's timestamp. Null if that block's time was not read. */
@@ -325,9 +359,13 @@ export function mergeCampaignDetail(snap: CampaignDetail | null, id: number, liv
   const c = live.views?.campaigns.find((x) => x.id === id);
   if (!c) return snap;
   const campaign = campaignFromChain(live, c, now, snap?.campaign);
+  // With the whole history in hand the detail is worked out from the events alone (a probe's gas
+  // is not in them, so it is taken from the snapshot where the snapshot measured it).
+  if (historyComplete(live)) return deriveCampaignDetail(ledgerOf(live), campaign, gasIndex(snap?.recentProbes));
+  const d = delta(live);
   const base = snap ? { ...snap, campaign } : emptyDetail(campaign);
-  const events = eventsFor(live, id).filter((e) => e.name !== "CampaignOpened");
-  const merged = events.length ? applyCampaignEvents(base, events, live) : base;
+  const events = eventsFor(d, id).filter((e) => e.name !== "CampaignOpened");
+  const merged = events.length ? applyCampaignEvents(base, events, d) : base;
   // The contract's own count of settled epochs wins over any event not read yet.
   merged.epochs = merged.epochs.map((e) => (e.epoch < campaign.settledEpochs && !e.settled ? { ...e, settled: true } : e));
   return merged;
@@ -377,7 +415,9 @@ function newProbesByCampaign(live: LiveData): Map<number, { n: number; covered: 
   return out;
 }
 
-function summaryFor(live: LiveData, snap: MarketSummary | null, base: TokenRef, quote: TokenRef, campaigns: CampaignView[], now: number): MarketSummary {
+function summaryFor(all: LiveData, snap: MarketSummary | null, base: TokenRef, quote: TokenRef, campaigns: CampaignView[], now: number): MarketSummary {
+  const full = historyComplete(all);
+  const live = delta(all);
   const vaults = vaultsOfPair(live, base.address, quote.address);
   const liveV = vaults.filter((v) => v.live);
   const pairCampaigns = campaigns.filter((c) => sameAddr(c.base.address, base.address) && sameAddr(c.quote.address, quote.address));
@@ -397,6 +437,9 @@ function summaryFor(live: LiveData, snap: MarketSummary | null, base: TokenRef, 
   const total = (sv?.probes ?? 0) + newN;
   const covered = (sv?.uptime ?? 0) * (sv?.probes ?? 0) + newCovered;
   const lastTs = lastBlock ? tsOf(live, lastBlock) : null;
+  const dm = full
+    ? deriveMarket(ledgerOf(all), pairCampaigns.map((c) => c.id), base, quote, now)
+    : null;
 
   // Best live bid and ask across vaults that are quoting right now.
   let bestBid: bigint | null = null;
@@ -420,17 +463,17 @@ function summaryFor(live: LiveData, snap: MarketSummary | null, base: TokenRef, 
     vaultCount: vaults.length,
     liveVaults: liveV.length,
     makerCount: new Set(vaults.map((v) => lc(v.owner))).size,
-    uptime24h: snap?.uptime24h ?? null,
-    probes24h: snap?.probes24h ?? 0,
+    uptime24h: dm ? dm.uptime24h : (snap?.uptime24h ?? null),
+    probes24h: dm ? dm.probes24h : (snap?.probes24h ?? 0),
     bestBidPx: bestBid?.toString() ?? null,
     bestAskPx: bestAsk?.toString() ?? null,
     spreadBps: sp,
     askDepth: askDepth.toString(),
     bidDepth: bidDepth.toString(),
     campaignIds: pairCampaigns.map((c) => c.id).sort((a, b) => a - b),
-    lastProbeAt: lastTs ?? snap?.lastProbeAt ?? null,
+    lastProbeAt: dm ? dm.lastProbeAt : (lastTs ?? snap?.lastProbeAt ?? null),
     sampledAt: live.views?.headTs ?? snap?.sampledAt ?? null,
-    verified: {
+    verified: dm?.verified ?? {
       probes: total,
       uptime: total ? covered / total : null,
       from: sv?.from ?? null,
@@ -468,10 +511,42 @@ export function mergeMarket(snap: MarketDetail | null, pair: string, live: LiveD
   const all = mergeMarkets(snap ? [snap.summary] : null, live, now);
   const summary = all.find((m) => lc(m.pair) === lc(pair));
   if (!summary) return snap;
-  const book = vaultsOfPair(live, summary.base.address, summary.quote.address).map((v) =>
+  let book = vaultsOfPair(live, summary.base.address, summary.quote.address).map((v) =>
     quoteView(v, snap?.book.find((q) => sameAddr(q.vault, v.address)), summary.base, summary.quote),
   );
-  return { summary, book, fills: snap?.fills ?? [], failedFills: snap?.failedFills ?? [] };
+  if (historyComplete(live)) book = withVaultUptime(ledgerOf(live), book, now);
+  // Fills and failed fills: the snapshot ones, then the ones the chain shows after its block.
+  const inPair = new Set(book.map((q) => lc(q.vault)));
+  const newFills: FillView[] = live.fills
+    .filter((f) => inPair.has(lc(f.vault)) && f.block > live.snapshotBlock && tsOf(live, f.block) !== null)
+    .map((f) => ({
+      txHash: f.txHash,
+      block: f.block,
+      ts: tsOf(live, f.block) as number,
+      vault: f.vault,
+      taker: f.taker,
+      buyingBase: f.buyingBase,
+      amountIn: f.amountIn,
+      amountOut: f.amountOut,
+      px: f.px,
+    }));
+  const newFailed: FailedFillView[] = live.failedFills
+    .filter((f) => inPair.has(lc(f.vault)) && f.block > live.snapshotBlock && tsOf(live, f.block) !== null)
+    .map((f) => ({ txHash: f.txHash, block: f.block, ts: tsOf(live, f.block) as number, vault: f.vault, taker: f.taker, amountIn: f.amountIn, status: f.status, penalized: f.penalized }));
+  const fills = [...newFills, ...(snap?.fills ?? [])].sort((a, b) => b.ts - a.ts || b.block - a.block).slice(0, 50);
+  const failedFills = [...newFailed, ...(snap?.failedFills ?? [])].sort((a, b) => b.ts - a.ts).slice(0, 20);
+  return { summary, book, fills, failedFills };
+}
+
+/**
+ * A market's uptime timeline. With the whole history held it is worked out from the probe events for
+ * the window asked for; until then it is the snapshot's, unchanged.
+ */
+export function mergeUptime(snap: UptimeResponse | null, pair: string, window: string, live: LiveData, now: number): UptimeResponse | null {
+  if (!live.views || !historyComplete(live)) return snap;
+  const cs = mergeCampaigns(null, live, now).filter((c) => lc(c.pair) === lc(pair));
+  if (cs.length === 0) return snap;
+  return deriveUptime(ledgerOf(live), cs, snap?.pair ?? pair, window, now);
 }
 
 /** Footer counts straight from the chain: vaults, vaults quoting right now, campaigns running now. */
@@ -505,7 +580,7 @@ export function mergeScorecard(snap: VaultScorecardData | null, vault: string, l
     results: [] as VaultProbeRow[],
     slashes: [] as VaultSlash[],
   };
-  const fresh = live.events.filter((e) => e.args.vault !== undefined && sameAddr(asStr(e.args.vault), vault));
+  const fresh = delta(live).events.filter((e) => e.args.vault !== undefined && sameAddr(asStr(e.args.vault), vault));
   const results: VaultProbeRow[] = [...base.results];
   const slashes: VaultSlash[] = [...base.slashes];
   const campaigns = new Set(base.campaigns);
@@ -534,7 +609,7 @@ export function mergeScorecard(snap: VaultScorecardData | null, vault: string, l
 }
 
 /** A wallet's maker profile: vaults it owns straight from the chain, registrations since the snapshot added. */
-export function mergeMaker(snap: MakerProfile | null, address: string, live: LiveData): MakerProfile | null {
+export function mergeMaker(snap: MakerProfile | null, address: string, live: LiveData, now: number): MakerProfile | null {
   const views = live.views;
   if (!views) return snap;
   const owned = views.vaults.filter((v) => sameAddr(v.owner, address));
@@ -552,7 +627,7 @@ export function mergeMaker(snap: MakerProfile | null, address: string, live: Liv
     };
   });
   const registrations: RegistrationView[] = [...(snap?.registrations ?? [])].map((r) => ({ ...r }));
-  for (const e of [...live.events].sort((x, y) => x.block - y.block || x.logIndex - y.logIndex)) {
+  for (const e of [...delta(live).events].sort((x, y) => x.block - y.block || x.logIndex - y.logIndex)) {
     const a = e.args;
     if (e.name === "MakerRegistered" && sameAddr(asStr(a.maker), address)) {
       const ts = tsOf(live, e.block);
@@ -568,6 +643,24 @@ export function mergeMaker(snap: MakerProfile | null, address: string, live: Liv
       if (r) r.status = e.name === "UnbondRequested" ? "unbonding" : "released";
     }
   }
+  if (historyComplete(live)) {
+    // Every registration, score and reward comes from the events; only the quote counts stay the snapshot's.
+    const L = ledgerOf(live);
+    const regs = deriveRegistrations(L, address);
+    const camps = new Map(mergeCampaigns(null, live, now).map((c) => [c.id, c]));
+    const scored = deriveMakerScores(
+      L,
+      address,
+      owned.map((v) => v.address),
+      now,
+      (cid) => {
+        const c = camps.get(cid);
+        return c ? { token: c.rewardToken, symbol: c.rewardSymbol, decimals: c.rewardDecimals } : null;
+      },
+    );
+    if (vaults.length === 0 && regs.length === 0 && scored.scores.length === 0 && !snap) return null;
+    return { address: addr(address), vaults, registrations: regs, ...scored };
+  }
   if (!snap && vaults.length === 0 && registrations.length === 0) return null;
   return {
     address: addr(address),
@@ -580,10 +673,26 @@ export function mergeMaker(snap: MakerProfile | null, address: string, live: Liv
 }
 
 /** The depth report with campaigns, epochs and probe counts added for what happened since the snapshot. */
-export function mergeReport(snap: DepthReport | null, token: string, live: LiveData, now: number): DepthReport | null {
-  if (!snap || !live.views) return snap;
-  const campaigns = mergeCampaigns(null, live, now).filter((c) => lc(c.base.symbol) === lc(token));
-  const probes = newProbesByCampaign(live);
+export function mergeReport(snap: DepthReport | null, token: string, live: LiveData, now: number, window = "all"): DepthReport | null {
+  if (!live.views) return snap;
+  const all = mergeCampaigns(null, live, now).filter((c) => lc(c.base.symbol) === lc(token));
+  if (historyComplete(live) && all.length > 0) {
+    // The report's market is the one with the most campaigns for this base token.
+    const byPair = new Map<string, CampaignView[]>();
+    for (const c of all) byPair.set(c.pair, [...(byPair.get(c.pair) ?? []), c]);
+    const [pair, cs] = [...byPair.entries()].sort((a, b) => b[1].length - a[1].length)[0] as [string, CampaignView[]];
+    const first = cs[0] as CampaignView;
+    const owner = (vault: string) => live.views?.vaults.find((v) => sameAddr(v.address, vault))?.owner ?? null;
+    return deriveReport(ledgerOf(live), cs, owner, first.base, first.quote, pair, window, now, {
+      campaigns: currentSource.campaigns,
+      factory: deployment.contracts.factory as Address,
+      router: currentSource.router,
+    });
+  }
+  if (!snap) return snap;
+  const d = delta(live);
+  const campaigns = all;
+  const probes = newProbesByCampaign(d);
   let n = 0;
   let covered = 0;
   const epochs = [...snap.epochs.map((e) => ({ ...e }))];
@@ -599,7 +708,7 @@ export function mergeReport(snap: DepthReport | null, token: string, live: LiveD
       const existing = epochs.find((x) => x.campaignId === c.id && x.epoch === e);
       let cnt = 0;
       let cov = 0;
-      for (const ev of live.events) {
+      for (const ev of d.events) {
         if (ev.name === "Probed" && asInt(ev.args.id) === c.id && asInt(ev.args.epoch) === e && asInt(ev.args.checked) > 0) {
           cnt += 1;
           if (asInt(ev.args.passed) > 0) cov += 1;
@@ -617,8 +726,8 @@ export function mergeReport(snap: DepthReport | null, token: string, live: LiveD
   const total = snap.probes + n;
   const probeLog: ProbeView[] = [...snap.probeLog];
   for (const c of campaigns) {
-    const d = mergeCampaignDetail(null, c.id, live, now);
-    if (d) for (const p of d.recentProbes) if (p.block > live.snapshotBlock && p.checked > 0) probeLog.unshift(p);
+    const det = mergeCampaignDetail(null, c.id, live, now);
+    if (det) for (const p of det.recentProbes) if (p.block > live.snapshotBlock && p.checked > 0) probeLog.unshift(p);
   }
   return {
     ...snap,
@@ -631,10 +740,41 @@ export function mergeReport(snap: DepthReport | null, token: string, live: LiveD
   };
 }
 
+/**
+ * The paginated probe log behind a report. With the whole history held it is every probe the market's
+ * campaigns have had, from the events; a probe's gas is the snapshot's where the snapshot measured it.
+ * Until then, null: the caller falls back to the snapshot's log plus probes since.
+ */
+export function mergeReportProbes(snapAll: ProbeView[] | null, token: string, live: LiveData, now: number): ProbeView[] | null {
+  if (!live.views || !historyComplete(live)) return null;
+  const all = mergeCampaigns(null, live, now).filter((c) => lc(c.base.symbol) === lc(token));
+  if (all.length === 0) return null;
+  const byPair = new Map<string, CampaignView[]>();
+  for (const c of all) byPair.set(c.pair, [...(byPair.get(c.pair) ?? []), c]);
+  const cs = [...byPair.values()].sort((a, b) => b.length - a.length)[0] as CampaignView[];
+  return deriveProbeLog(ledgerOf(live), cs, gasIndex(snapAll ?? undefined));
+}
+
 /** Economics: the probe count includes probes since the snapshot; gas and quote figures stay the snapshot's. */
-export function mergeEconomics(snap: EconomicsResponse | null, live: LiveData): EconomicsResponse | null {
+export function mergeEconomics(snap: EconomicsResponse | null, live: LiveData, now: number): EconomicsResponse | null {
   if (!snap || !live.views) return snap;
-  const fresh = [...newProbesByCampaign(live).values()].reduce((a, p) => a + p.n, 0);
+  if (historyComplete(live)) {
+    // Probe counts and times come from the events; the on-chain write counter of each vault gives the
+    // number of quote writes. Gas, gas price and the dollar price need receipts and a price feed.
+    const t = deriveProbeTotals(ledgerOf(live), now);
+    const writes = live.views.vaults.reduce((a, v) => a + v.quoteData.seq, 0);
+    return {
+      ...snap,
+      totalProbes: t.totalProbes,
+      firstProbeAt: t.firstProbeAt,
+      lastProbeAt: t.lastProbeAt,
+      // The rate over the last 24 hours when there were probes in it, else the snapshot's last measured rate.
+      probesPerHour: t.probesPerHour ?? snap.probesPerHour,
+      quoteUpdates: writes,
+      avgBlockTimeMs: live.views.avgBlockMs ?? snap.avgBlockTimeMs,
+    };
+  }
+  const fresh = [...newProbesByCampaign(delta(live)).values()].reduce((a, p) => a + p.n, 0);
   return { ...snap, totalProbes: snap.totalProbes + fresh };
 }
 
