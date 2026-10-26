@@ -62,6 +62,52 @@
   --c-muted: var(--c-fill-muted);
 }
 
+/*
+ * Printing: only what is marked .print-only, on plain white with black ink. Anything marked
+ * .no-print (the app chrome, forms, buttons) is dropped, and both themes print as the light one.
+ */
+.print-only {
+  display: none;
+}
+@media print {
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --c-bg: 255 255 255;
+    --c-paper: 255 255 255;
+    --c-ink: 0 0 0;
+    --c-muted: 60 60 60;
+    --c-shadow: 0 0 0;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block;
+  }
+  body {
+    background: #fff;
+    color: #000;
+    font-size: 12pt;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .print-only table {
+    border-collapse: collapse;
+  }
+  .print-only th,
+  .print-only td {
+    padding: 2px 12px 2px 0;
+    text-align: left;
+  }
+  a {
+    color: #000 !important;
+    text-decoration: none !important;
+  }
+}
+
 @layer base {
   body {
     @apply bg-bg font-sans text-[14px] leading-relaxed text-ink antialiased;

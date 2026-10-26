@@ -1,4 +1,5 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { isAddress } from "viem";
 import {
   SNAPSHOT_DIR,
   snapshotFile,
@@ -13,6 +14,7 @@ import {
   type ProbeView,
   type SnapshotMeta,
   type UptimeResponse,
+  type VaultScorecardData,
 } from "@plumbline/shared";
 
 /**
@@ -92,6 +94,16 @@ export const useUptime = (pair: string, window: string): UseQueryResult<UptimeRe
     queryKey: ["uptime", pair, window],
     queryFn: () => apiGet<UptimeResponse>(`/markets/${pair}/uptime?window=${window}`),
     ...slow(5_000),
+  });
+
+/** A vault's probe results and slashes: from the snapshot file in static mode, the indexer in live mode. */
+export const useScorecard = (address: string | undefined): UseQueryResult<VaultScorecardData> =>
+  useQuery({
+    queryKey: ["scorecard", address?.toLowerCase()],
+    queryFn: () => apiGet<VaultScorecardData>(`/vaults/${address ?? ""}/scorecard`),
+    enabled: Boolean(address) && isAddress(address ?? ""),
+    retry: STATIC ? false : 1,
+    ...slow(15_000),
   });
 
 export const useCampaigns = (): UseQueryResult<CampaignView[]> =>

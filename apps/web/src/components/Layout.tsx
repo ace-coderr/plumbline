@@ -14,6 +14,7 @@ const NAV = [
   { to: "/campaigns", label: "Campaigns", end: false },
   { to: "/maker", label: "Maker", end: false },
   { to: "/economics", label: "Economics", end: false },
+  { to: "/scorecard", label: "Scorecard", end: false },
   { to: "/how-it-works", label: "How it works", end: false },
 ] as const;
 
@@ -103,7 +104,7 @@ function StatusBar() {
   const k = keeper.data;
   const indexerTone = health.isError ? "fail" : h && h.lagBlocks < 50 ? "pass" : "warn";
   return (
-    <footer className="fixed inset-x-0 bottom-0 z-20 flex h-7 items-center gap-4 overflow-hidden border-t-2 border-ink bg-paper px-4 text-2xs text-ink">
+    <footer className="no-print fixed inset-x-0 bottom-0 z-20 flex h-7 items-center gap-4 overflow-hidden border-t-2 border-ink bg-paper px-4 text-2xs text-ink">
       <span className="num flex shrink-0 items-center gap-1.5">
         <Dot tone={STATIC ? "none" : indexerTone} live={!STATIC && indexerTone === "pass"} />
         {STATIC ? "snapshot" : "indexer"} {h ? `#${fmtInt(h.cursor)}` : health.isError ? "offline" : "…"}
@@ -140,7 +141,7 @@ function StatusBar() {
 export function Layout() {
   return (
     <div className="min-h-screen pb-14">
-      <header className="sticky top-0 z-20 border-b-2 border-ink bg-bg">
+      <header className="no-print sticky top-0 z-20 border-b-2 border-ink bg-bg">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5">
           <Link to="/" aria-label="Plumbline home">
             <Wordmark size={22} />
@@ -170,7 +171,7 @@ export function Layout() {
       </header>
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:py-8">
         {STATIC && (
-          <div className="mb-6">
+          <div className="no-print mb-6">
             <SnapshotStamp />
           </div>
         )}
