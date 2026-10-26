@@ -1,8 +1,20 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { isAddress } from "viem";
+import { getLive, waitFirstAttempt } from "./liveStore";
 import {
   SNAPSHOT_DIR,
+  SNAPSHOT_WINDOW,
+  chainNow,
+  mergeCampaignDetail,
+  mergeCampaigns,
+  mergeEconomics,
+  mergeMaker,
+  mergeMarket,
+  mergeMarkets,
+  mergeReport,
+  mergeScorecard,
   snapshotFile,
+  type LiveData,
   type CampaignDetail,
   type CampaignView,
   type DepthReport,
@@ -83,11 +95,74 @@ export const useSnapshot = (): UseQueryResult<SnapshotMeta | null> =>
 export const useHealth = (): UseQueryResult<IndexerHealth> =>
   useQuery({ queryKey: ["health"], queryFn: () => apiGet<IndexerHealth>("/health"), ...live });
 
+/**
+ * Static mode serves a snapshot; the live reader (liveStore) adds what happened on-chain since. A hook
+ * here fetches its snapshot file (immutable, memoised), waits for the first chain read if the snapshot
+ * has nothing, and merges. The live store invalidates these queries whenever it learns something, so a
+ * campaign created seconds ago appears without a reload. In live (indexer) mode they are plain polls.
+ */
+const snapshotMemo = new Map<string, Promise<unknown>>();
+function snapshotOrNull<T>(path: string): Promise<T | null> {
+  let p = snapshotMemo.get(path);
+  if (!p) {
+    p = apiGet<T>(path).catch((err: unknown) => {
+      snapshotMemo.delete(path); // only a 404 is a fact worth keeping
+      if (err instanceof ApiError && err.status === 404) {
+        snapshotMemo.set(path, Promise.resolve(null));
+        return null;
+      }
+      throw err;
+    });
+    snapshotMemo.set(path, p);
+  }
+  return p as Promise<T | null>;
+}
+
+const liveNow = (): number => {
+  const s = getLive();
+  return chainNow(s.data, Date.now(), s.readAtMs);
+};
+
+interface MergedQuery<T> {
+  key: unknown[];
+  /** Indexer path in live mode, snapshot file path in static mode. */
+  path: string | null;
+  merge: (snap: T | null, live: LiveData, now: number) => T | null;
+  enabled?: boolean;
+  poll?: "fast" | number;
+  /** In static mode, not finding it: whether the chain not being readable is the reason. */
+  retry?: boolean;
+}
+
+function useMerged<T>(q: MergedQuery<T>): UseQueryResult<T> {
+  const polling = q.poll === "fast" ? live : slow(typeof q.poll === "number" ? q.poll : 15_000);
+  return useQuery<T>({
+    queryKey: q.key,
+    enabled: q.enabled ?? true,
+    retry: STATIC ? false : (q.retry ?? true) ? 1 : false,
+    meta: { live: STATIC },
+    queryFn: async () => {
+      if (!STATIC) return apiGet<T>(q.path ?? "");
+      const snap = q.path ? await snapshotOrNull<T>(q.path) : null;
+      // Never call something missing before the chain has been asked.
+      if (snap === null) await waitFirstAttempt();
+      const s = getLive();
+      const out = q.merge(snap, s.data, liveNow());
+      if (out === null) {
+        if (s.data.views === null) throw new ApiError(503, "The chain could not be read, and this is not in the snapshot.");
+        throw new ApiError(404, "not found");
+      }
+      return out;
+    },
+    ...(STATIC ? { staleTime: Infinity } : polling),
+  });
+}
+
 export const useMarkets = (): UseQueryResult<MarketSummary[]> =>
-  useQuery({ queryKey: ["markets"], queryFn: () => apiGet<MarketSummary[]>("/markets"), ...live });
+  useMerged<MarketSummary[]>({ key: ["markets"], path: "/markets", merge: (s, l, n) => mergeMarkets(s, l, n), poll: "fast" });
 
 export const useMarket = (pair: string): UseQueryResult<MarketDetail> =>
-  useQuery({ queryKey: ["market", pair], queryFn: () => apiGet<MarketDetail>(`/markets/${pair}`), ...live });
+  useMerged<MarketDetail>({ key: ["market", pair], path: `/markets/${pair}`, merge: (s, l, n) => mergeMarket(s, pair, l, n), poll: "fast" });
 
 export const useUptime = (pair: string, window: string): UseQueryResult<UptimeResponse> =>
   useQuery({
@@ -96,37 +171,51 @@ export const useUptime = (pair: string, window: string): UseQueryResult<UptimeRe
     ...slow(5_000),
   });
 
-/** A vault's probe results and slashes: from the snapshot file in static mode, the indexer in live mode. */
+/**
+ * A vault's probe results and slashes: the snapshot's rows plus every ProbeResult and Penalized event
+ * since (static mode), or the indexer's (live mode). A vault created after the snapshot is built from
+ * the chain once its events have been read; until then this says it is still reading.
+ */
 export const useScorecard = (address: string | undefined): UseQueryResult<VaultScorecardData> =>
-  useQuery({
+  useQuery<VaultScorecardData>({
     queryKey: ["scorecard", address?.toLowerCase()],
-    queryFn: () => apiGet<VaultScorecardData>(`/vaults/${address ?? ""}/scorecard`),
     enabled: Boolean(address) && isAddress(address ?? ""),
     retry: STATIC ? false : 1,
-    ...slow(15_000),
+    meta: { live: STATIC },
+    queryFn: async () => {
+      if (!STATIC) return apiGet<VaultScorecardData>(`/vaults/${address ?? ""}/scorecard`);
+      const snap = await snapshotOrNull<VaultScorecardData>(`/vaults/${address ?? ""}/scorecard`);
+      if (snap === null) await waitFirstAttempt();
+      const s = getLive();
+      const out = mergeScorecard(snap, address ?? "", s.data);
+      if (out) return out;
+      if (s.data.views === null) throw new ApiError(503, "The chain could not be read, and this vault is not in the snapshot.");
+      if (s.data.views.vaults.some((v) => v.address.toLowerCase() === (address ?? "").toLowerCase())) {
+        throw new ApiError(425, "Reading this vault's history from the chain.");
+      }
+      throw new ApiError(404, "unknown vault");
+    },
+    ...(STATIC ? { staleTime: Infinity } : { refetchInterval: 15_000 }),
   });
 
 export const useCampaigns = (): UseQueryResult<CampaignView[]> =>
-  useQuery({ queryKey: ["campaigns"], queryFn: () => apiGet<CampaignView[]>("/campaigns"), ...live });
+  useMerged<CampaignView[]>({ key: ["campaigns"], path: "/campaigns", merge: (s, l, n) => mergeCampaigns(s, l, n), poll: "fast" });
 
 export const useCampaign = (id: number): UseQueryResult<CampaignDetail> =>
-  useQuery({ queryKey: ["campaign", id], queryFn: () => apiGet<CampaignDetail>(`/campaigns/${id}`), ...live });
+  useMerged<CampaignDetail>({ key: ["campaign", id], path: `/campaigns/${id}`, merge: (s, l, n) => mergeCampaignDetail(s, id, l, n), poll: "fast" });
 
 export const useMaker = (address: string | undefined): UseQueryResult<MakerProfile> =>
-  useQuery({
-    queryKey: ["maker", address],
-    queryFn: () => apiGet<MakerProfile>(`/makers/${address ?? ""}`),
+  useMerged<MakerProfile>({
+    key: ["maker", address],
+    path: address ? `/makers/${address}` : null,
+    merge: (s, l) => mergeMaker(s, address ?? "", l),
     enabled: Boolean(address),
-    retry: STATIC ? false : 1,
-    ...live,
+    poll: "fast",
+    retry: false,
   });
 
 export const useReport = (token: string, window: string): UseQueryResult<DepthReport> =>
-  useQuery({
-    queryKey: ["report", token, window],
-    queryFn: () => apiGet<DepthReport>(`/reports/${token}?window=${window}`),
-    ...slow(15_000),
-  });
+  useMerged<DepthReport>({ key: ["report", token, window], path: `/reports/${token}?window=${window}`, merge: (s, l, n) => mergeReport(s, token, l, n) });
 
 export const useReportProbes = (
   token: string,
@@ -135,19 +224,26 @@ export const useReportProbes = (
 ): UseQueryResult<{ total: number; probes: ProbeView[] }> =>
   useQuery({
     queryKey: ["report-probes", token, offset, limit],
+    meta: { live: STATIC },
     queryFn: async () => {
       if (!STATIC) {
         return getJson<{ total: number; probes: ProbeView[] }>(`${API}/reports/${token}/probes?offset=${offset}&limit=${limit}`);
       }
-      // The snapshot carries the whole probe log once; page through it locally.
-      const all = await apiGet<{ total: number; probes: ProbeView[] }>(`/reports/${token}/probes`);
-      return { total: all.total, probes: all.probes.slice(offset, offset + limit) };
+      // The snapshot carries the whole probe log once; probes since come from the chain. Page locally.
+      const all = await snapshotOrNull<{ total: number; probes: ProbeView[] }>(`/reports/${token}/probes`);
+      if (all === null) throw new ApiError(404, "not in this snapshot");
+      const report = await snapshotOrNull<DepthReport>(`/reports/${token}?window=${SNAPSHOT_WINDOW}`);
+      const s = getLive();
+      const merged = report && s.data.views ? mergeReport(report, token, s.data, liveNow()) : null;
+      const fresh = (merged?.probeLog ?? []).filter((p) => p.block > s.data.snapshotBlock);
+      const probes = [...fresh, ...all.probes];
+      return { total: probes.length, probes: probes.slice(offset, offset + limit) };
     },
-    ...slow(15_000),
+    ...(STATIC ? { staleTime: Infinity } : { refetchInterval: 15_000 }),
   });
 
 export const useEconomics = (): UseQueryResult<EconomicsResponse> =>
-  useQuery({ queryKey: ["economics"], queryFn: () => apiGet<EconomicsResponse>("/economics"), ...live });
+  useMerged<EconomicsResponse>({ key: ["economics"], path: "/economics", merge: (s, l) => mergeEconomics(s, l), poll: "fast" });
 
 export interface KeeperStats {
   keeper: string;

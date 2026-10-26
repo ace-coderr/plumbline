@@ -11,11 +11,14 @@ import { EconomicsPage } from "./pages/Economics";
 import { HowItWorksPage } from "./pages/HowItWorks";
 import { ScorecardPage } from "./pages/Scorecard";
 import { VerifyPage } from "./pages/Verify";
+import { LiveBridge } from "./components/LiveBridge";
 import { NotFound } from "./pages/NotFound";
 
 export function App() {
   return (
-    <Routes>
+    <>
+      <LiveBridge />
+      <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<MarketsPage />} />
         <Route path="/market/:pair" element={<MarketPage />} />
@@ -33,5 +36,6 @@ export function App() {
         <Route path="/report/:token" element={<ReportPage />} />
       </Route>
     </Routes>
+    </>
   );
 }

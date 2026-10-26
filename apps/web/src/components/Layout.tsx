@@ -4,7 +4,9 @@ import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { REPO_URL, addressUrl, deployment, elysiumTestnet } from "@plumbline/shared";
 import { STATIC, useCampaigns, useHealth, useKeeper, useMarkets } from "../lib/api";
 import { SnapshotStamp, useNow } from "./Snapshot";
-import { fmtInt, short } from "../lib/format";
+import { dateTime, fmtInt, short } from "../lib/format";
+import { liveCounts } from "@plumbline/shared";
+import { useLive } from "../lib/liveStore";
 import { Wordmark } from "./Brand";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button, Dot, cx } from "./ui";
@@ -97,27 +99,49 @@ function StatusBar() {
   const keeper = useKeeper();
   const markets = useMarkets();
   const campaigns = useCampaigns();
+  const live = useLive();
   const now = useNow();
-  const vaults = (markets.data ?? []).reduce((a, m) => a + m.vaultCount, 0);
-  const quoting = (markets.data ?? []).reduce((a, m) => a + m.liveVaults, 0);
-  const running = (campaigns.data ?? []).filter((c) => now >= c.startTime && now < c.startTime + c.numEpochs * c.epochLength).length;
+  const views = STATIC && live.status !== "error" ? live.data.views : null;
+  const counts = views ? liveCounts(live.data, now) : null;
+  // From the chain when it is being read, otherwise from the snapshot's own figures.
+  const vaults = counts ? counts.vaults : (markets.data ?? []).reduce((a, m) => a + m.vaultCount, 0);
+  const quoting = counts ? counts.quoting : (markets.data ?? []).reduce((a, m) => a + m.liveVaults, 0);
+  const running = counts ? counts.running : (campaigns.data ?? []).filter((c) => now >= c.startTime && now < c.startTime + c.numEpochs * c.epochLength).length;
+  const lastProbe = (campaigns.data ?? []).reduce((a, c) => Math.max(a, c.lastProbeAt ?? 0), 0);
   const h = health.data;
   const k = keeper.data;
   const indexerTone = health.isError ? "fail" : h && h.lagBlocks < 50 ? "pass" : "warn";
+  const when = STATIC && !counts ? " at the snapshot" : " right now";
   return (
     <footer className="no-print fixed inset-x-0 bottom-0 z-20 flex h-7 items-center gap-4 overflow-hidden border-t-2 border-ink bg-paper px-4 text-2xs text-ink">
       <span className="num flex shrink-0 items-center gap-1.5">
-        <Dot tone={STATIC ? "none" : indexerTone} live={!STATIC && indexerTone === "pass"} />
-        {STATIC ? "snapshot" : "indexer"} {h ? `#${fmtInt(h.cursor)}` : health.isError ? "offline" : "…"}
+        <Dot tone={STATIC ? (views ? "pass" : "none") : indexerTone} live={STATIC ? Boolean(views) : indexerTone === "pass"} />
+        {STATIC
+          ? views
+            ? `chain #${fmtInt(views.head)}`
+            : live.status === "error"
+              ? "RPC unreachable"
+              : `snapshot #${live.snapshot ? fmtInt(live.snapshot.block) : "…"}`
+          : `indexer ${h ? `#${fmtInt(h.cursor)}` : health.isError ? "offline" : "…"}`}
       </span>
-      <span className="num flex shrink-0 items-center gap-1.5">
-        <Dot tone={k ? "pass" : "none"} live={Boolean(k)} />
-        keeper {k ? `${fmtInt(k.totals.probes)} probes` : "not running"}
+      {STATIC ? (
+        <span className="num hidden shrink-0 md:inline">
+          {lastProbe ? `last probe ${dateTime(lastProbe).replace("Z", " UTC")}` : "no probes yet"}
+        </span>
+      ) : (
+        <span className="num flex shrink-0 items-center gap-1.5">
+          <Dot tone={k ? "pass" : "none"} live={Boolean(k)} />
+          keeper {k ? `${fmtInt(k.totals.probes)} probes` : "not running"}
+        </span>
+      )}
+      <span className="num shrink-0">
+        {quoting} of {vaults} vaults quoting{when}
+        <span className="hidden sm:inline">
+          {" "}
+          · {running} campaign{running === 1 ? "" : "s"} running
+        </span>
       </span>
-      <span className="num hidden shrink-0 sm:inline">
-        {quoting} of {vaults} vaults quoting · {running} campaign{running === 1 ? "" : "s"} running
-      </span>
-      <span className="num hidden shrink-0 sm:inline">chain {deployment.chainId}</span>
+      <span className="num hidden shrink-0 lg:inline">chain {deployment.chainId}</span>
       <span className="ml-auto flex shrink-0 gap-4">
         {(["factory", "router", "campaigns"] as const).map((c) => (
           <a
@@ -125,7 +149,7 @@ function StatusBar() {
             href={addressUrl(deployment.contracts[c])}
             target="_blank"
             rel="noreferrer"
-            className="num hidden hover:text-violet-text md:inline"
+            className="num hidden hover:text-violet-text xl:inline"
             title={`${c} contract on the Elysium explorer`}
           >
             {c} {short(deployment.contracts[c], 4)}

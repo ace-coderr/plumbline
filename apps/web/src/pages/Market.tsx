@@ -18,6 +18,7 @@ import { ago, clock, fmtAmt, fmtBps, fmtInt, fmtPct, fmtPx, px, tone, toneText, 
 import { useTxRunner } from "../lib/tx";
 import { ChartLegend, PROBE_STRIP_LEGEND, ProbeStrip, UptimeChart } from "../components/charts";
 import { GasCost, WriteNotice } from "../components/Write";
+import { useLive } from "../lib/liveStore";
 import { LoadFailed, Missing } from "../components/Missing";
 import { TxStatus } from "../components/TxStatus";
 import {
@@ -246,6 +247,8 @@ export function MarketPage() {
   const { pair = "" } = useParams();
   const [win, setWin] = useState<Win>("6h");
   const market = useMarket(pair);
+  const liveState = useLive();
+  const chainRead = STATIC && liveState.status !== "error" && liveState.data.views !== null;
   const uptime = useUptime(pair, STATIC ? SNAPSHOT_WINDOW : win);
 
   if (market.isLoading) return <Loading rows={6} />;
@@ -254,7 +257,7 @@ export function MarketPage() {
       <LoadFailed
         error={market.error ?? "unknown market"}
         missing={
-          <Missing title={`No market ${pair.replace("-", "/")}${STATIC ? " in this snapshot" : ""}`} links={[{ to: "/", label: "All markets" }]}>
+          <Missing title={`No market ${pair.replace("-", "/")}`} links={[{ to: "/", label: "All markets" }]}>
             <p>Markets are named BASE-QUOTE, for example WHYPE-PLUMBUSD.</p>
           </Missing>
         }
@@ -365,15 +368,24 @@ export function MarketPage() {
           </Panel>
 
           <Panel
-            title={STATIC ? "Quote ladder at snapshot" : "Live quote ladder"}
+            title={STATIC ? (chainRead ? "Quote ladder, read from the chain" : "Quote ladder at snapshot") : "Live quote ladder"}
             pad={false}
-            right={<span>{STATIC ? "quotes and inventory when the snapshot was taken" : "inventory read on-chain"}</span>}
+            right={
+              <span>
+                {STATIC ? (chainRead ? "quotes and inventory read on-chain just now" : "quotes and inventory when the snapshot was taken") : "inventory read on-chain"}
+              </span>
+            }
           >
+            {chainRead && book.length > 0 && book.every((q) => !q.live) && (
+              <p className="border-b border-ink px-3 py-2 text-xs">
+                No vault has a live quote right now: every quote below has expired, so nothing is being quoted on this pair.
+              </p>
+            )}
             <Ladder book={book} m={m} />
           </Panel>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Recent fills" pad={false}>
+            <Panel title="Recent fills" pad={false} right={STATIC ? <span>through the snapshot; later fills are not listed</span> : undefined}>
               {fills.length === 0 ? (
                 <Empty>No fills yet.</Empty>
               ) : (

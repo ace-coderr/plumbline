@@ -14,6 +14,7 @@ import {
 import { STATIC, useCampaigns, useMarket, useMarkets, useScorecard } from "../lib/api";
 import { fmtAmt, fmtInt, fmtPct, short, tone, toneText } from "../lib/format";
 import { MAX_LABEL, useVaultLabels } from "../lib/labels";
+import { useLive } from "../lib/liveStore";
 import { bodyFromData, downloadText } from "../lib/scorecardReport";
 import { WalletButton } from "../components/Layout";
 import {
@@ -68,9 +69,11 @@ function PairVaults({ pair }: { pair: string }) {
 
 function KnownVaults() {
   const markets = useMarkets();
+  const liveState = useLive();
+  const chainRead = STATIC && liveState.status !== "error" && liveState.data.views !== null;
   const list = markets.data ?? [];
   return (
-    <Panel title={STATIC ? "Vaults in this snapshot" : "Vaults"} pad={false}>
+    <Panel title={STATIC && !chainRead ? "Vaults in this snapshot" : "Vaults on Elysium"} pad={false}>
       {markets.isLoading ? (
         <Loading rows={3} />
       ) : list.length === 0 ? (
@@ -535,11 +538,18 @@ export function ScorecardPage() {
       ) : q.isLoading ? (
         <Loading rows={5} />
       ) : q.isError || !q.data ? (
-        q.error instanceof ApiError && q.error.status === 404 ? (
+        q.error instanceof ApiError && q.error.status === 425 ? (
+          <Panel title="Reading this vault's history" className="no-print">
+            <p className="text-sm leading-6">
+              This vault was created after the snapshot. Its probe results are being read from the chain now; this page fills in when that finishes,
+              and it never shows a partial history as complete.
+            </p>
+          </Panel>
+        ) : q.error instanceof ApiError && q.error.status === 404 ? (
           <Panel title="No scorecard for this vault" className="no-print">
             <p className="text-sm leading-6">
               {STATIC
-                ? "This vault is not in the snapshot: it may have been created after it. Any probes that checked it are still on-chain, in the campaigns contract's ProbeResult events on the explorer."
+                ? "This address is not a Plumbline vault: it is not in the snapshot, and the factory's list of vaults on the chain does not include it."
                 : "The indexer does not know this vault. Check the address, or wait for the indexer to catch up."}
             </p>
             <p className="mt-2">

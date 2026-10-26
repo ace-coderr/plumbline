@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { waitForTransactionReceipt } from "wagmi/actions";
 import { BaseError, type Hash } from "viem";
 import { wagmiConfig } from "./wagmi";
+import { refreshLive } from "./liveStore";
 
 export type TxState =
   | { status: "idle" }
@@ -38,8 +39,9 @@ export function useTxRunner() {
         return false;
       }
     }
-    // Live data picks the change up; a snapshot never will, so there is nothing to refetch.
+    // Indexer mode refetches; the static site asks the chain reader to look now instead of at its next poll.
     if (import.meta.env.VITE_DATA_MODE !== "static") await qc.invalidateQueries();
+    else await refreshLive().catch(() => undefined);
     return true;
   }
 

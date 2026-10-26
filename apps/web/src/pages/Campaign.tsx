@@ -44,7 +44,7 @@ export function CampaignPage() {
       <LoadFailed
         error={q.error ?? "unknown campaign"}
         missing={
-          <Missing title={`No campaign #${idParam}${STATIC ? " in this snapshot" : ""}`} links={[{ to: "/campaigns", label: "All campaigns" }]}>
+          <Missing title={`No campaign #${idParam}`} links={[{ to: "/campaigns", label: "All campaigns" }]}>
             <p>Campaigns are numbered from 1 in the order they were opened.</p>
           </Missing>
         }
@@ -86,7 +86,7 @@ export function CampaignPage() {
         }
         sub={
           <>
-            Sponsored by <AddrLink address={c.creator} /> · opened <TxLink hash={c.openedTx} /> ·{" "}
+            Sponsored by <AddrLink address={c.creator} /> · opened {c.openedTx ? <TxLink hash={c.openedTx} /> : "(transaction not read yet)"} ·{" "}
             {now < end ? `ends ${dateTime(end)}` : `ended ${ago(end)}`}
           </>
         }

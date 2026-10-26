@@ -77,7 +77,7 @@ export function EconomicsPage() {
           </>
         }
         sub={`Every figure in the Elysium column is measured from this run's receipts${
-          STATIC ? ", as of the snapshot" : ""
+          STATIC ? ", as of the snapshot (the probe count also includes probes the chain has recorded since)" : ""
         }. The other column is a set of assumptions you can change.`}
       />
 
@@ -94,7 +94,7 @@ export function EconomicsPage() {
         <Stat
           label="Keeper"
           value={keeper.data ? `${keeper.data.totals.probesPerMinute.toFixed(1)}/m` : "off"}
-          sub={keeper.data ? `${fmtInt(keeper.data.totals.probes)} probes this run` : STATIC ? "not running; snapshot" : "not running"}
+          sub={keeper.data ? `${fmtInt(keeper.data.totals.probes)} probes this run` : STATIC ? "not observable here" : "not running"}
         />
       </StatRow>
 

@@ -6,6 +6,7 @@ import { waitForTransactionReceipt } from "wagmi/actions";
 import { MEASURED_GAS, deployment, knownTokens, plumbCampaignsAbi } from "@plumbline/shared";
 import { wagmiConfig } from "../lib/wagmi";
 import { useTxRunner } from "../lib/tx";
+import { getLive, refreshLive } from "../lib/liveStore";
 import { STATIC } from "../lib/api";
 import { duration, fmtDec } from "../lib/format";
 import { TxStatus } from "../components/TxStatus";
@@ -141,9 +142,23 @@ export function NewCampaignPage() {
         try {
           const e = decodeEventLog({ abi: plumbCampaignsAbi, data: l.data, topics: l.topics });
           if (e.eventName === "CampaignOpened") {
-            // A snapshot has no page for a campaign opened after it; say what happened instead.
-            if (STATIC) setOpened({ id: e.args.id.toString(), hash });
-            else nav(`/campaign/${e.args.id.toString()}`);
+            const id = e.args.id.toString();
+            if (!STATIC) {
+              nav(`/campaign/${id}`);
+              return;
+            }
+            // The page reads the chain: look now, and wait until the node shows the campaign (a node
+            // behind the one that took the transaction can take a few seconds).
+            for (let attempt = 0; attempt < 6; attempt++) {
+              await refreshLive().catch(() => undefined);
+              if (getLive().data.views?.campaigns.some((c) => String(c.id) === id)) {
+                nav(`/campaign/${id}`);
+                return;
+              }
+              await new Promise((r) => setTimeout(r, 1_500));
+            }
+            // The chain could not be read: the campaign exists, but this page cannot show it yet.
+            setOpened({ id, hash });
             return;
           }
         } catch {
@@ -284,8 +299,8 @@ export function NewCampaignPage() {
                 Campaign <span className="num">#{opened.id}</span> is open on-chain.
               </div>
               <p>
-                Opened in <TxLink hash={opened.hash} />. Makers can bond into it and anyone can probe it now. This site shows a
-                snapshot taken before it existed, so it has no page for it until the snapshot is refreshed.
+                Opened in <TxLink hash={opened.hash} />. Makers can bond into it and anyone can probe it now. The chain could not be read
+                just now, so this page cannot show it yet; it will appear on the campaigns list once the chain answers.
               </p>
             </div>
           )}

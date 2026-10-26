@@ -18,6 +18,7 @@ import {
 } from "@plumbline/shared";
 import { STATIC, useCampaigns, useMaker, useMarkets } from "../lib/api";
 import { wagmiConfig } from "../lib/wagmi";
+import { useLive } from "../lib/liveStore";
 import { ago, fmtAmt, fmtInt, fmtPct, fmtPx, short, tone, toneText } from "../lib/format";
 import { useTxRunner } from "../lib/tx";
 import { TxStatus } from "../components/TxStatus";
@@ -525,6 +526,7 @@ export function MakerPage() {
   const maker = useMaker(address);
   const campaigns = useCampaigns();
   const markets = useMarkets();
+  const liveState = useLive();
   const [selected, setSelected] = useState<string>("");
   const count = useReadContract({
     address: deployment.contracts.factory,
@@ -537,7 +539,8 @@ export function MakerPage() {
   const snapshotCount = markets.data ? markets.data.reduce((a, m) => a + m.vaultCount, 0) : null;
   // The snapshot's count from the frozen data, the live count straight from the factory; "…" until
   // known, never a zero that only means "not loaded yet".
-  const totalLine = STATIC ? (
+  const chainRead = STATIC && liveState.status !== "error" && liveState.data.views !== null;
+  const totalLine = STATIC && !chainRead ? (
     <>
       <span className="num">{snapshotCount ?? "…"}</span> vaults on Plumbline at the snapshot
       {chainCount !== null && snapshotCount !== null && chainCount !== snapshotCount && (
