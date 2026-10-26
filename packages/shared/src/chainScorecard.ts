@@ -29,10 +29,19 @@ export interface ScanOptions {
   /** Extra attempts for a failing range before it is split or given up on. */
   retries?: number;
   retryDelayMs?: number;
+  /**
+   * Failed requests in a row (reset by any success) before the scan gives up. Without it, a node that
+   * keeps failing makes the scan split ever smaller ranges and retry each one, which looks like hanging.
+   */
+  maxFailures?: number;
   onProgress?: (doneThrough: bigint) => void;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** A node refusing the range itself (too wide, too many results): retrying the same range cannot help. */
+const refusesRange = (err: unknown): boolean =>
+  /more than|too many|limit|exceed|too large|range|result set|response size/i.test(err instanceof Error ? ((err as { shortMessage?: string }).shortMessage ?? err.message) : String(err));
 
 /**
  * Read [from, to] in chunks. A range the node refuses (too many results, too wide) is retried, then
@@ -44,17 +53,22 @@ export async function scanRange<T>(
   fetchRange: (from: bigint, to: bigint) => Promise<T[]>,
   opts: ScanOptions = {},
 ): Promise<T[]> {
-  const { chunk = 50_000n, minChunk = 500n, retries = 4, retryDelayMs = 700, onProgress } = opts;
+  const { chunk = 50_000n, minChunk = 500n, retries = 2, retryDelayMs = 700, maxFailures = 5, onProgress } = opts;
   if (to < from) return [];
   const out: T[] = [];
+  let failures = 0;
 
   const read = async (a: bigint, b: bigint): Promise<T[]> => {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        return await fetchRange(a, b);
+        const got = await fetchRange(a, b);
+        failures = 0;
+        return got;
       } catch (err) {
         lastError = err;
+        if (++failures > maxFailures) throw err;
+        if (refusesRange(err)) break; // split now instead of asking the same question again
         if (attempt < retries) await sleep(retryDelayMs * (attempt + 1));
       }
     }

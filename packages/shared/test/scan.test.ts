@@ -82,3 +82,36 @@ describe("scanRange", () => {
     assert.deepEqual(seen, [100n, 200n, 250n]);
   });
 });
+
+describe("scanRange gives up in bounded time", () => {
+  it("stops after its failure budget when the node keeps failing, instead of splitting forever", async () => {
+    let calls = 0;
+    await assert.rejects(
+      scanRange(
+        1n,
+        1_000_000n,
+        async () => {
+          calls++;
+          throw new Error("node down");
+        },
+        { chunk: 1_000_000n, minChunk: 10n, retries: 2, retryDelayMs: 0, maxFailures: 8 },
+      ),
+      /node down/,
+    );
+    assert.equal(calls, 9); // the budget, plus the attempt that exceeded it
+  });
+
+  it("still finishes when failures stay within the budget", async () => {
+    let calls = 0;
+    const out = await scanRange(
+      1n,
+      100n,
+      async (a, b) => {
+        if (calls++ < 3) throw new Error("flaky");
+        return [a, b];
+      },
+      { chunk: 100n, retries: 4, retryDelayMs: 0, maxFailures: 8 },
+    );
+    assert.deepEqual(out, [1n, 100n]);
+  });
+});
