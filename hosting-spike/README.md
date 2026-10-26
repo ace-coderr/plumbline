@@ -77,3 +77,21 @@ probe that measures exactly these on your account in about ten minutes.
 
 The probe is TypeScript, adds no dependency to the repository (it imports `viem` from the root
 install) and is not part of `pnpm typecheck` or the build.
+
+## Result of the Cloudflare probe (2026-10-26, run on a Workers Free account)
+
+400 alarms at a 1.5 s cadence over 602 s, Durable Object in the Amsterdam colo, three subrequests a tick:
+
+| | result |
+|---|---|
+| alarm lateness | median 0 ms, p95 1 ms, max 2 ms; 0 alarms over 500 ms |
+| RPC `eth_blockNumber`, primary / Conduit | median 235 / 240 ms, p95 242 / 246 ms, max 931 / 332 ms |
+| price feed | median 428 ms, p95 659 ms, max 808 ms |
+| whole tick | median 428 ms, p95 659 ms, max 931 ms (inside the 1.5 s cadence) |
+| errors | none (no limit error, no rate limit, no exceeded CPU) |
+| signing | reads 0 ms: Workers freeze the clock while code runs, so this is not a measurement; the proof is zero CPU-limit errors in 400 ticks that each signed a transaction |
+
+Alarms are punctual and the nodes answer in about 240 ms from Amsterdam, against about 540 ms from Lagos,
+which also helps landing probes inside the 1.1 s gate. Not shown by a 10-minute run: behaviour over 4
+hours, the daily free quota with all three bots, and whether Cloudflare treats a long alarm loop as
+fair use. The probe was deleted afterwards and its workers.dev address returns 404.
