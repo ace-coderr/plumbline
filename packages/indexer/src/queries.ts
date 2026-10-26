@@ -26,6 +26,7 @@ import {
   type UptimeBucket,
   type UptimeResponse,
   type VerifiedFigures,
+  type VaultScorecardData,
   type Hash,
 } from "@plumbline/shared";
 import { getMeta, type DB } from "./db.js";
@@ -857,6 +858,73 @@ export class Queries {
         router: deployment.contracts.router,
       },
     };
+  }
+
+  /** Every vault the factory has created, as the indexer knows it. */
+  listVaultAddresses(): Address[] {
+    return (this.db.prepare("SELECT address FROM vaults ORDER BY created_block, address").all() as { address: string }[]).map((r) =>
+      addr(r.address),
+    );
+  }
+
+  /**
+   * The raw material for a vault's scorecard: each ProbeResult and Penalized event against it, up to
+   * `asOfBlock` (slashes by timestamp, as penalties are stored without a block). Null if the vault is
+   * unknown or was created after `asOfBlock`. A vault no probe has checked returns empty lists, never invented figures.
+   */
+  vaultScorecard(vault: string, asOfBlock: number, asOfTs: number): VaultScorecardData | null {
+    const v = this.db
+      .prepare("SELECT address, market_id, owner FROM vaults WHERE lower(address) = lower(?) AND created_block <= ?")
+      .get(vault, asOfBlock) as
+      | { address: string; market_id: number; owner: string }
+      | undefined;
+    if (!v) return null;
+    const m = this.marketById(v.market_id);
+    if (!m) return null;
+    const { base, quote } = this.refs(m);
+    const results = (
+      this.db
+        .prepare(
+          `SELECT r.campaign_id, r.epoch, r.nonce, r.passed, r.fail_mask, r.spread_bps, r.bid_px, r.ask_px, r.bid_size, r.ask_size
+           FROM probe_results r JOIN probes p ON p.campaign_id = r.campaign_id AND p.nonce = r.nonce
+           WHERE lower(r.vault) = lower(?) AND p.block <= ?
+           ORDER BY r.campaign_id, r.nonce`,
+        )
+        .all(v.address, asOfBlock) as {
+        campaign_id: number;
+        epoch: number;
+        nonce: number;
+        passed: number;
+        fail_mask: number;
+        spread_bps: number;
+        bid_px: string;
+        ask_px: string;
+        bid_size: string;
+        ask_size: string;
+      }[]
+    ).map((r) => ({
+      campaignId: r.campaign_id,
+      epoch: r.epoch,
+      nonce: r.nonce,
+      passed: r.passed === 1,
+      failMask: r.fail_mask,
+      spreadBps: r.spread_bps,
+      bidPx: r.bid_px,
+      askPx: r.ask_px,
+      bidSize: r.bid_size,
+      askSize: r.ask_size,
+    }));
+    const slashes = (
+      this.db
+        .prepare("SELECT campaign_id, tx_hash, slashed FROM penalties WHERE lower(vault) = lower(?) AND ts <= ? ORDER BY campaign_id, ts")
+        .all(v.address, asOfTs) as { campaign_id: number; tx_hash: string; slashed: string }[]
+    ).map((p) => ({ campaignId: p.campaign_id, txHash: p.tx_hash as Hash, slashed: p.slashed }));
+    const campaigns = (
+      this.db.prepare("SELECT DISTINCT campaign_id FROM registrations WHERE lower(vault) = lower(?) ORDER BY campaign_id").all(v.address) as {
+        campaign_id: number;
+      }[]
+    ).map((r) => r.campaign_id);
+    return { vault: addr(v.address), owner: addr(v.owner), pair: m.slug, base, quote, campaigns, asOfBlock, results, slashes };
   }
 
   /** Paginated probe log behind a report, newest first. */

@@ -69,6 +69,12 @@ export function registerApi(app: FastifyInstance, q: Queries, sync: Syncer, hype
     return q.maker(req.params.address);
   });
 
+  app.get<{ Params: { address: string } }>("/vaults/:address/scorecard", async (req, reply) => {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(req.params.address)) return reply.code(400).send({ error: "bad address" });
+    const d = q.vaultScorecard(req.params.address, sync.cursor, Math.floor(Date.now() / 1000));
+    return d ?? reply.code(404).send({ error: "unknown vault" });
+  });
+
   app.get("/campaigns", async () => q.listCampaigns());
 
   app.get<{ Params: { id: string } }>("/campaigns/:id", async (req, reply) => {

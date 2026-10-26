@@ -11,8 +11,11 @@
  *
  * Uses the local indexer database (INDEXER_DB, default data/indexer-99801.sqlite). Set
  * SNAPSHOT_FRESH=1 to rebuild from the deploy block into a throwaway database instead.
+ *
+ *   pnpm export:static --scorecards-only   add the per-vault scorecard files to the existing snapshot,
+ *                                          at its recorded block, leaving every other file untouched
  */
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createPublicClient, http } from "viem";
@@ -69,6 +72,26 @@ async function main(): Promise<void> {
   const { cursor, hypeUsd } = indexer.status();
   const q = indexer.queries;
 
+  // Every vault's raw probe results and slashes, up to the snapshot's block.
+  const writeScorecards = (block: number, blockTimestamp: number): number => {
+    let n = 0;
+    for (const v of q.listVaultAddresses()) {
+      const card = q.vaultScorecard(v, block, blockTimestamp);
+      if (!card) continue; // created after the snapshot
+      write(`/vaults/${v}/scorecard`, card);
+      n++;
+    }
+    return n;
+  };
+
+  if (process.argv.includes("--scorecards-only")) {
+    const existing = JSON.parse(readFileSync(join(OUT, "meta.json"), "utf8")) as SnapshotMeta;
+    const n = writeScorecards(existing.block, existing.blockTimestamp);
+    log.info("scorecards written", { vaults: n, block: existing.block });
+    indexer.close();
+    process.exit(0);
+  }
+
   const client = createPublicClient({ chain: elysiumTestnet, transport: http(process.env.INDEXER_RPC_URL ?? ELYSIUM_TESTNET.rpcUrl) });
   const block = await client.getBlock({ blockNumber: BigInt(cursor) });
 
@@ -123,7 +146,10 @@ async function main(): Promise<void> {
     }
   }
 
+  const scorecards = writeScorecards(meta.block, meta.blockTimestamp);
+
   log.info("snapshot written", {
+    scorecards,
     block: meta.block,
     at: new Date(meta.blockTimestamp * 1000).toISOString(),
     markets: markets.length,
