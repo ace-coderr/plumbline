@@ -20,8 +20,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsc -p tsconfig.json --watch"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "tsx --test test/*.test.ts"
   },
   "peerDependencies": {
     "viem": "^2.21.55"
@@ -29,6 +30,7 @@
   "devDependencies": {
     "typescript": "^5.7.2",
     "viem": "^2.21.55",
-    "@types/node": "^20.17.10"
+    "@types/node": "^20.17.10",
+    "tsx": "^4.19.2"
   }
 }

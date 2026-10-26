@@ -7,3 +7,5 @@ export * from "./api.js";
 export * from "./economics.js";
 export * from "./snapshot.js";
 export * from "./links.js";
+export * from "./scorecard.js";
+export * from "./chainScorecard.js";

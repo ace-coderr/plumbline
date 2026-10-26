@@ -25,7 +25,8 @@
     "demo": "tsx scripts/demo.ts",
     "measure": "tsx scripts/measure.ts",
     "budget": "tsx scripts/budget.ts",
-    "export:static": "tsx scripts/export-static.ts"
+    "export:static": "tsx scripts/export-static.ts",
+    "test": "pnpm --filter @plumbline/shared test"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",

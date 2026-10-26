@@ -49,6 +49,9 @@ export function snapshotFile(apiPath: string): string | null {
       return a ? `campaigns/${a}.json` : "campaigns.json";
     case "makers":
       return a ? `makers/${a.toLowerCase()}.json` : null;
+    case "vaults":
+      // /vaults/<address>/scorecard
+      return a && b === "scorecard" ? `scorecards/${a.toLowerCase()}.json` : null;
     case "reports":
       if (!a) return null;
       if (b === "probes") return `reports/${a.toUpperCase()}-probes.json`;
