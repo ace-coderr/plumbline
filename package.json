@@ -26,7 +26,7 @@
     "measure": "tsx scripts/measure.ts",
     "budget": "tsx scripts/budget.ts",
     "export:static": "tsx scripts/export-static.ts",
-    "test": "pnpm --filter @plumbline/shared test",
+    "test": "pnpm --filter @plumbline/shared test && pnpm --filter @plumbline/runner test",
     "check:scorecard": "tsx scripts/check-scorecard.ts",
     "deploy:faucet": "tsx scripts/deploy-faucet.ts",
     "deploy:v2": "tsx scripts/deploy-v2.ts",

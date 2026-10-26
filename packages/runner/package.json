@@ -1,0 +1,20 @@
+{
+  "name": "@plumbline/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scheduled keeper and maker bots for Cloudflare Workers (Durable Objects). Not deployed until its secrets are set and the schedule is enabled.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@plumbline/shared": "workspace:*",
+    "viem": "^2.21.55"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

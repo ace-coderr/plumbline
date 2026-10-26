@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    "types": ["node"],
+    "rootDir": "..",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src", "test", "../../bots.schedule.json"]
+}

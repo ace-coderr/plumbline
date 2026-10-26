@@ -1,0 +1,188 @@
+import { encodeFunctionData, type Hash, type PublicClient } from "viem";
+import { plumbCampaignsAbi } from "@plumbline/shared";
+import { CAMPAIGNS } from "./config.js";
+import type { Signer } from "./chain.js";
+import { shortHash } from "./core/redact.js";
+import { errText, type Logger } from "./core/log.js";
+import { pollable, settleDue, type Track } from "./core/keeper.js";
+
+/**
+ * One keeper burst, run from a Durable Object alarm. A burst polls the probe gate for a few seconds
+ * from both nodes at once (the gate is open for about a second, and a poll takes about a quarter of
+ * one on this host), sends a probe the moment it opens, and settles finished epochs. Each burst stays
+ * under 40 subrequests, inside the 50 a Workers Free invocation is allowed.
+ */
+export interface KeeperState {
+  bursts: number;
+  tracks: Track[];
+  refreshedAt: number;
+  settleCheckedAt: number;
+  quietUntil: Record<number, number>;
+  pending: { hash: Hash; id: number; at: number }[];
+  probesSent: number;
+  probesLanded: number;
+  probesReverted: number;
+  settles: number;
+  failed: number;
+  lastProbeAt: number;
+  lastError: string | null;
+}
+
+export const newKeeperState = (): KeeperState => ({
+  bursts: 0,
+  tracks: [],
+  refreshedAt: 0,
+  settleCheckedAt: 0,
+  quietUntil: {},
+  pending: [],
+  probesSent: 0,
+  probesLanded: 0,
+  probesReverted: 0,
+  settles: 0,
+  failed: 0,
+  lastProbeAt: 0,
+  lastError: null,
+});
+
+export interface KeeperCtx {
+  signer: Signer;
+  clients: [PublicClient, PublicClient];
+  state: KeeperState;
+  log: Logger;
+}
+
+const BURST_MS = 3_500;
+const SUBREQUEST_BUDGET = 38;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function refresh(c: KeeperCtx, nowMs: number): Promise<number> {
+  const client = c.clients[0];
+  const count = Number(await client.readContract({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "campaignCount" }));
+  // The most recent campaigns only: older ones are over.
+  const ids = Array.from({ length: Math.min(count, 6) }, (_, i) => count - i);
+  if (ids.length === 0) {
+    c.state.tracks = [];
+    c.state.refreshedAt = nowMs;
+    return 1;
+  }
+  const reads = await client.multicall({
+    allowFailure: false,
+    contracts: ids.flatMap((id) => [
+      { address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "terms", args: [BigInt(id)] } as const,
+      { address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "state", args: [BigInt(id)] } as const,
+    ]),
+  });
+  c.state.tracks = ids.map((id, i) => {
+    const t = reads[2 * i] as { epochLength: bigint; minProbeInterval: number };
+    const s = reads[2 * i + 1] as { startTime: bigint; numEpochs: number; settledEpochs: number; lastProbeAt: bigint };
+    return {
+      id,
+      startTime: Number(s.startTime),
+      numEpochs: s.numEpochs,
+      epochLength: Number(t.epochLength),
+      minProbeInterval: t.minProbeInterval,
+      settledEpochs: s.settledEpochs,
+      lastProbeAt: Number(s.lastProbeAt),
+    };
+  });
+  c.state.refreshedAt = nowMs;
+  return 2;
+}
+
+/** Look at the receipts of probes sent in earlier bursts, to count landed and reverted. */
+async function settlePending(c: KeeperCtx): Promise<number> {
+  let used = 0;
+  const keep: KeeperState["pending"] = [];
+  for (const p of c.state.pending) {
+    if (used >= 3) {
+      keep.push(p);
+      continue;
+    }
+    used += 1;
+    const r = await c.clients[0].getTransactionReceipt({ hash: p.hash }).catch(() => null);
+    if (!r) {
+      if (Date.now() - p.at < 20_000) keep.push(p);
+      continue;
+    }
+    if (r.status === "success") c.state.probesLanded += 1;
+    else c.state.probesReverted += 1;
+  }
+  c.state.pending = keep;
+  return used;
+}
+
+export async function keeperBurst(c: KeeperCtx): Promise<void> {
+  const st = c.state;
+  const t0 = Date.now();
+  st.bursts += 1;
+  let used = 0;
+  try {
+    if (t0 - st.refreshedAt > 5_000) used += await refresh(c, t0);
+    if (st.pending.length) used += await settlePending(c);
+
+    const nowSec = () => Math.floor(Date.now() / 1000);
+    if (t0 - st.settleCheckedAt > 15_000) {
+      st.settleCheckedAt = t0;
+      const due = settleDue(st.tracks, nowSec());
+      if (due) {
+        try {
+          await c.signer.send(CAMPAIGNS, encodeFunctionData({ abi: plumbCampaignsAbi, functionName: "settle", args: [BigInt(due.id)] }), 400_000n);
+          st.settles += 1;
+          // Count it settled until the next refresh says otherwise, so it is not sent twice.
+          due.settledEpochs += 1;
+          used += 1;
+        } catch (err) {
+          st.failed += 1;
+          st.lastError = errText(err);
+          c.log.warn("settle failed", { id: due.id, err: st.lastError });
+        }
+      }
+    }
+
+    // Poll the gate until the burst ends, alternating nodes, three polls in flight, staggered.
+    let turn = 0;
+    while (Date.now() - t0 < BURST_MS && used < SUBREQUEST_BUDGET) {
+      const targets = pollable(st.tracks, nowSec(), st.quietUntil, Date.now());
+      if (targets.length === 0) {
+        await sleep(400);
+        continue;
+      }
+      const polls = [0, 1, 2].map(async (k) => {
+        await sleep(k * 110);
+        const client = c.clients[(turn + k) % 2] as PublicClient;
+        const open = await client
+          .multicall({
+            allowFailure: true,
+            contracts: targets.map((t) => ({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "probeGateOpen", args: [BigInt(t.id)] }) as const),
+          })
+          .catch(() => null);
+        used += 1;
+        return open ? targets.filter((_, i) => open[i]?.status === "success" && open[i]?.result === true) : [];
+      });
+      turn += 3;
+      const results = await Promise.all(polls);
+      const opened = new Set(results.flat().map((t) => t.id));
+      for (const id of opened) {
+        // Re-checked after the polls came back: another poll in this round may already have sent.
+        if (Date.now() < (st.quietUntil[id] ?? 0)) continue;
+        st.quietUntil[id] = Date.now() + 2_000;
+        try {
+          const hash = await c.signer.send(CAMPAIGNS, encodeFunctionData({ abi: plumbCampaignsAbi, functionName: "probe", args: [BigInt(id)] }), 450_000n);
+          st.probesSent += 1;
+          st.lastProbeAt = Date.now();
+          st.pending.push({ hash, id, at: Date.now() });
+          c.log.info("probe sent", { id, tx: shortHash(hash) });
+          used += 1;
+        } catch (err) {
+          st.failed += 1;
+          st.lastError = errText(err);
+          c.log.warn("probe send failed", { id, err: st.lastError });
+        }
+      }
+    }
+  } catch (err) {
+    st.failed += 1;
+    st.lastError = errText(err);
+    c.log.warn("keeper burst failed", { err: st.lastError });
+  }
+}
