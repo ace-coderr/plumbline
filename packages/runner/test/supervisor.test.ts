@@ -100,7 +100,7 @@ describe("keys are checked against the schedule", () => {
     assert.throws(() => accountFor({ KEEPER_KEY: key } as unknown as Env, "keeper", schedule), (e: Error) => /does not belong to wallets\.keeper/.test(e.message) && !e.message.includes(key.slice(2)));
   });
   it("asks for the address when the wallet is not listed yet", () => {
-    assert.throws(() => accountFor({ SPONSOR_KEY: key } as unknown as Env, "sponsor", schedule), /wallets\.sponsor is null/);
+    assert.throws(() => accountFor({ SPONSOR_KEY: key } as unknown as Env, "sponsor", { ...schedule, wallets: { ...schedule.wallets, sponsor: null } }), /wallets\.sponsor is null/);
   });
   it("returns null when no secret is set", () => {
     assert.equal(accountFor({} as unknown as Env, "keeper", schedule), null);

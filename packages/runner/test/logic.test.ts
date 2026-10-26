@@ -8,7 +8,7 @@ import { pollable, settleDue, type Track } from "../src/core/keeper.js";
 
 const raw = JSON.parse(readFileSync(new URL("../../../bots.schedule.json", import.meta.url), "utf8")) as Record<string, unknown>;
 const base = parseSchedule(raw);
-const on: BotsSchedule = { ...base, enabled: true, wallets: { ...base.wallets, sponsor: "0x00000000000000000000000000000000000000f1" } };
+const on: BotsSchedule = { ...base, enabled: true, windows: [{ startUtc: "09:00", minutes: 240 }], wallets: { ...base.wallets, sponsor: "0x00000000000000000000000000000000000000f1" } };
 const T = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 const IN = T("2026-10-27T10:00:00Z"); // inside 09:00-13:00 UTC
 

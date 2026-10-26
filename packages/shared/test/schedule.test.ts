@@ -12,7 +12,8 @@ describe("bots.schedule.json", () => {
 
   it("ships switched off, with one four-hour daily window", () => {
     assert.equal(s.enabled, false);
-    assert.deepEqual(s.windows, [{ startUtc: "09:00", minutes: 240 }]);
+    assert.equal(s.windows.length, 1);
+    assert.equal(s.windows[0]?.minutes, 240);
   });
 
   it("keeps the deployer out of it: no wallet role for it", () => {
@@ -52,7 +53,7 @@ describe("bots.schedule.json", () => {
 });
 
 describe("windows", () => {
-  const on: BotsSchedule = { ...parseSchedule(shipped), enabled: true };
+  const on: BotsSchedule = { ...parseSchedule(shipped), enabled: true, windows: [{ startUtc: "09:00", minutes: 240 }] };
 
   it("is inside the window only between its start and end", () => {
     assert.equal(windowAt(on, T("2026-10-27T08:59:59Z")), null);

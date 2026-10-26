@@ -1,6 +1,6 @@
 {
   "enabled": false,
-  "windows": [{ "startUtc": "09:00", "minutes": 240 }],
+  "windows": [{ "startUtc": "13:00", "minutes": 240 }],
   "dailyHypeCap": 0.13,
   "floorHype": {
     "keeper": 0.0003,
@@ -14,7 +14,7 @@
     "keeper": "0xde8554954841D2fAbCacAddfAD95899c8BF3E989",
     "quoterA": "0x415cC195D814661F4A4B7C7b70F790433eb1CaE5",
     "quoterB": "0xE83F05536a7B737D75D2A77cDEF72D10d2Dc65d1",
-    "sponsor": null,
+    "sponsor": "0x57DaD4c30DE394A7404ed04a11Ff726F73CEC6ee",
     "makerA": "0xE071a74989784bce375af084069C3aB9b8D872eF",
     "makerB": "0xA12c18aF4faA2aA266Ac705Ad1D6E1A644Ff32C3"
   },
