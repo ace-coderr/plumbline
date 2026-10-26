@@ -1,5 +1,6 @@
-**Live site: [plumbline-elysium.vercel.app](https://plumbline-elysium.vercel.app)** · a frozen snapshot of the testnet
-run, with wallet actions that send real transactions ([what that means](#public-site-a-static-snapshot)) ·
+**Live site: [plumbline-elysium.vercel.app](https://plumbline-elysium.vercel.app)** · a static site: a snapshot
+of the testnet run, plus whatever its browser reads from the chain live; wallet actions send real
+transactions ([what that means](#public-site-a-snapshot-plus-a-live-chain-reader)) ·
 [how it works](https://plumbline-elysium.vercel.app/how-it-works)
 
 <p align="center">
@@ -266,10 +267,10 @@ pnpm stack
 `pnpm stack --dev` runs from sources with the Vite dev server on :5173. Each service also runs on
 its own: `pnpm --filter @plumbline/keeper start` and so on.
 
-### Public site: a static snapshot
+### Public site: a snapshot plus a live chain reader
 
-Both campaigns are settled and the keeper and bots are off, so the indexed data no longer changes.
-The public site is a static export of it, hosted with no server, function or database.
+The public site is static: no server, function or database. It ships a snapshot of the indexer's data
+(taken at a recorded block) and its browser reads everything that happened on-chain since.
 
 ```bash
 pnpm export:static                                  # index to the chain head, write the snapshot
@@ -277,29 +278,45 @@ pnpm --filter @plumbline/web build:static           # vite build --mode static +
 ```
 
 * `pnpm export:static` runs the indexer to the chain head, then writes every response the dashboard
-  reads (markets, campaigns, epochs, probes, fills, maker scores, report figures, economics) to
-  `apps/web/public/snapshot/` and stamps `meta.json` with the block height and its UTC time. It also
-  renders the report link-preview PNGs into `apps/web/public/og/report/`. Both are committed.
+  reads (markets, campaigns, epochs, probes, fills, maker scores, report figures, economics, per-vault
+  scorecards) to `apps/web/public/snapshot/` and stamps `meta.json` with the block height and its UTC
+  time. It also renders the report link-preview PNGs into `apps/web/public/og/report/`. Both are committed.
 * `vite build --mode static` makes the app read those files instead of the REST API (same paths, one
   shared mapping in `packages/shared/src/snapshot.ts`). The default build and `pnpm stack` still use
   the live API: this is a second mode, not a replacement.
-* Rolling windows (24h, 7d) measured back from export time would all hold the same probes, so frozen
+* **The live reader** (`packages/shared/src/liveReader.ts`, `apps/web/src/lib/liveStore.ts`) reads, from
+  the primary Elysium RPC with the Conduit node as fallback (short timeouts, backoff on rate limits):
+  current campaign terms and state, every vault with its live quote and balances (contract views, one
+  round of multicalls), and the campaigns contract's events after the snapshot block (chunked `getLogs`,
+  cached in IndexedDB when the browser allows it). `liveMerge.ts` merges that into the snapshot's shapes,
+  so a campaign created seconds ago appears on `/campaigns`, a new campaign's page loads from the chain,
+  a vault created after the snapshot gets a scorecard, and the footer counts vaults quoting right now.
+  First load shows the snapshot at once and goes live in a few seconds; a second visit reuses the cache.
+* **The banner says which it is:** "Live from chain, latest block N, updated Xs ago"; the history scan's
+  progress while it is still reading; or "RPC unreachable, showing snapshot from <date>" with a retry
+  countdown. Until the chain answers, the snapshot is shown and labelled, never an empty list.
+* **What is still the snapshot's** (not recomputed in the browser): uptime timelines, spread and depth
+  medians over probes (probe *counts* and uptime do include new probes), fills, the 24-hour quote-update
+  count, gas and block-time figures, and per-epoch scores of campaigns that predate the snapshot beyond
+  what events add. The pages say "through the snapshot" where it matters.
+* Rolling windows (24h, 7d) measured back from export time would all hold the same probes, so static
   pages show one window, labelled: the campaign window, from the first campaign's start to the last
-  one's end. The live build keeps the window toggles.
-* The write path stays live: opening a campaign, deploying and funding a vault, bonding, settling and
-  swapping all send real transactions to the deployed contracts. Every page with a write action says,
-  above it, that the transaction will land on-chain but not appear on the site until the snapshot is
-  refreshed, and a confirmed transaction is reported with its explorer link rather than by waiting for
-  data. Defaults on `/campaigns/new` fit a testnet-faucet wallet (0.012 HYPE in total), and each
-  action shows its network fee from the measured gas table below.
-* Every page that shows data carries the snapshot's block height (linked to the explorer) and UTC
-  time, and the keeper reads "not running". Every probe, settlement and the slash still links to its
-  transaction on the Elysium explorer, so the snapshot can be checked without us.
+  one's end. The live (indexer) build keeps the window toggles.
+* The write path is live: opening a campaign, deploying and funding a vault, bonding, settling and
+  swapping all send real transactions to the deployed contracts. After one, the page asks the reader to
+  look and, for a new campaign, redirects to its page once a node shows it. If no RPC can be reached the
+  page says it cannot show the result and links the transaction instead. Defaults on `/campaigns/new` fit
+  a testnet-faucet wallet (0.012 HYPE in total), and each action shows its network fee from the measured
+  gas table below.
+* The reader trusts the RPC node it reads from. A node that returned false logs could mislead it;
+  `/verify` compares figures against the chain and is exposed to the same trust. Build with
+  `VITE_RPC_URL` set to put your own node first.
 * A static host cannot inject per-request meta tags, so the build writes `report/<TOKEN>.html` with
   that report's Open Graph tags; [`vercel.json`](vercel.json) serves it at `/report/<TOKEN>` and falls
   back to the SPA for every other route. Preview images use `PUBLIC_URL` or Vercel's production domain.
 
-To refresh the snapshot after new on-chain activity: rerun `pnpm export:static`, commit, push.
+To refresh the snapshot after new on-chain activity: rerun `pnpm export:static`, commit, push. Until
+then the browser fills the gap itself.
 
 ### Running the live indexer (Railway)
 
@@ -328,17 +345,26 @@ Keeper: `GET :8787/health`, `GET :8787/stats`.
 ## Scorecards and verification
 
 * **`/scorecard/<vault>`** shows what probes verified about one vault: uptime, median spread, verified
-  depth, slashes and each epoch, from the snapshot or the live indexer. A vault no probe has checked shows
-  dashes, not zeros. Teams can label a vault ("Our MM"); the label stays in the browser's localStorage and
-  is never sent anywhere or put on-chain. A report downloads as JSON (figures, block, keccak256 hash) or
-  prints; the vault's owner can sign the hash with `personal_sign`.
+  depth, slashes and each epoch: the snapshot's rows plus every probe and slash the chain has recorded
+  since (static site), or the live indexer's. A vault no probe has checked shows dashes, not zeros, and a
+  vault created after the snapshot says it is still being read until its events are in. Teams can label a
+  vault ("Our MM"); the label stays in the browser (localStorage, or memory if storage is blocked) and is
+  never sent anywhere or put on-chain. A report downloads as JSON (figures, block, keccak256 hash) or
+  prints; the vault's owner can sign the hash with `personal_sign`. A label goes into a file only if you
+  tick the box, and is not part of the hash.
 * **`/verify`** takes a report and recomputes every figure from the chain with chunked `getLogs`, without
-  the indexer, then marks each as MATCH or MISMATCH, including whether the signer owns the vault.
+  the indexer, then marks each as MATCH or MISMATCH: the hash, the signature, that the signer owns the
+  vault on-chain, the vault's tokens, owner and pair, and each figure. A report with a field it does not
+  verify, a repeated epoch, or a block the chain has not reached is refused. If the chain cannot be read
+  it says so, shows no result and offers Retry; it never turns a failure into a MATCH. Signatures from
+  contract wallets (multisigs) are not supported.
 * Probe results are public on-chain. Privacy here means a vault address not tied to a team's identity, and
-  choosing who receives the report. It does not hide on-chain data.
-* `pnpm test` runs the scoring, hashing, signing and log-scanning tests. `pnpm check:scorecard` compares
-  every vault in the snapshot with the chain; `pnpm export:static --scorecards-only` regenerates the
-  per-vault files at the snapshot's own block.
+  choosing who receives the report. It does not hide on-chain data. Looking a vault up is a web request:
+  this site's host (which serves a file named by the address) and the RPC nodes `/verify` reads from can
+  see which address was asked about, as with any web request.
+* `pnpm test` runs the scoring, hashing, signing, log-scanning and live-merge tests. `pnpm check:scorecard`
+  compares every vault in the snapshot with the chain; `pnpm export:static --scorecards-only` regenerates
+  the per-vault files at the snapshot's own block.
 
 ## 60-second demo
 

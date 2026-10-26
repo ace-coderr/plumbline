@@ -39,6 +39,15 @@ import {
 } from "../components/ui";
 import { ApiError } from "../lib/api";
 
+/** Why an address is refused, in words: a wrong checksum is the likely typo, so it gets its own message. */
+function addressProblem(s: string): string | null {
+  if (isAddress(s)) return null;
+  if (/^0x[0-9a-fA-F]{40}$/.test(s)) {
+    return "This address has the right shape but its capital letters do not match its checksum. Check it for a typo, or paste it in all lower case.";
+  }
+  return "Not a valid address: it should be 0x followed by 40 hex characters.";
+}
+
 const DISCLOSURE =
   "Probe results are public on-chain. Privacy here means a vault address not tied to your team's identity, and you choose who receives the report. It does not hide on-chain data.";
 
@@ -501,6 +510,10 @@ export function ScorecardPage() {
       <div className="no-print rounded-[8px] border-2 border-ink bg-paper px-4 py-3 text-sm leading-6 shadow-brut">
         <div className="label text-ink">Disclosure</div>
         <p className="mt-1">{DISCLOSURE}</p>
+        <p className="mt-2 text-xs text-muted">
+          Looking a vault up is a web request: this site's host, which serves a file named by the address, and the RPC nodes that Verify reads from can
+          see which address was asked about, as with any web request.
+        </p>
       </div>
 
       <Panel title="Vault address" className="no-print">
@@ -514,11 +527,7 @@ export function ScorecardPage() {
           <div className="min-w-[16rem] flex-1">
             <Field
               label="Vault"
-              hint={
-                trimmed && !inputOk
-                  ? "Not a valid address: it should be 0x followed by 40 hex characters (checksummed if mixed case)."
-                  : "A PlumbQuote vault on Elysium."
-              }
+              hint={trimmed && !inputOk ? addressProblem(trimmed) : "A PlumbQuote vault on Elysium."}
             >
               <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="0x…" spellCheck={false} autoComplete="off" />
             </Field>
@@ -530,7 +539,7 @@ export function ScorecardPage() {
       </Panel>
 
       {param !== undefined && !paramOk ? (
-        <ErrorNote error={`"${param}" is not a valid vault address.`} />
+        <ErrorNote error={`"${param.slice(0, 60)}": ${addressProblem(param) ?? ""}`} />
       ) : param === undefined ? (
         <div className="no-print">
           <KnownVaults />

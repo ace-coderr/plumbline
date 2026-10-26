@@ -8,10 +8,43 @@ import {
   txUrl,
 } from "@plumbline/shared";
 import { N, Page, PageHeader } from "../components/ui";
+import { useNow } from "../components/Snapshot";
+import { useLive } from "../lib/liveStore";
+import { liveCounts } from "@plumbline/shared";
 
 const SLASH_TX = "0xc3d0bd9f3921ca7558416fd09cfcaff9566571024c8f3e0c01c5402e0f94233f";
 const MAX_AGE = deployment.params.maxAge;
 const WITHDRAW_DELAY = deployment.params.withdrawDelay;
+
+/** Whether any campaign is running, from the chain when it can be read, else the plain demo statement. */
+function RunningLine() {
+  const live = useLive();
+  const now = useNow();
+  const c = live.status !== "error" && live.data.views ? liveCounts(live.data, now) : null;
+  if (!c) {
+    return (
+      <>
+        <strong>There are no live funded campaigns in the demo.</strong> The site shows a finished demo: campaigns #1 and #2.
+      </>
+    );
+  }
+  if (c.running === 0) {
+    return (
+      <>
+        <strong>No campaign is running right now</strong> (read from the chain at block <N>{live.data.views?.head.toLocaleString("en-US")}</N>). The demo
+        campaigns, #1 and #2, are finished.
+      </>
+    );
+  }
+  return (
+    <>
+      <strong>
+        {c.running} campaign{c.running === 1 ? " is" : "s are"} running right now
+      </strong>
+      , each funded by its own sponsor. The project funds none of them.
+    </>
+  );
+}
 
 function Ext({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -65,11 +98,12 @@ export function HowItWorksPage() {
             It runs on <strong>Elysium testnet</strong>. No real money is involved anywhere on this site.
           </li>
           <li>
-            <strong>There are no live funded campaigns right now.</strong> The site shows a finished demo.
+            <RunningLine />
           </li>
           <li>
-            <strong>Every payout in this demo, rewards and probe fees, was in PLUMBUSD</strong>, a mintable demo token, not real
-            money. Nobody was paid anything of value, and the project has no funding obligation to anyone.
+            <strong>Every payout in the demo campaigns (#1 and #2), rewards and probe fees, was in PLUMBUSD</strong>, a mintable demo token,
+            not real money. Nobody was paid anything of value, and the project has no funding obligation to anyone. A campaign opened since by
+            another wallet is funded by that wallet.
           </li>
           <li>
             <strong>PLUMBUSD is a mintable demo token</strong> standing in for USDC, which is not faucet-available on Elysium
@@ -196,8 +230,8 @@ export function HowItWorksPage() {
             Anyone with a little HYPE for gas: call <span className="num">probe(campaignId)</span> on the{" "}
             <Ext href={addressUrl(campaigns)}>campaigns contract</Ext> while its gate is open. The keeper in{" "}
             <Ext href={`${REPO_URL}/tree/main/packages/keeper`}>packages/keeper</Ext> does exactly that; it ran every probe in
-            this demo, from the author's wallet. The probe fee comes out of the campaign sponsor's pool; with no funded
-            campaign running, as now, there is nothing to probe and no fee to earn.
+            this demo, from the author's wallet. The probe fee comes out of the campaign sponsor's pool; when no
+            funded campaign is running there is nothing to probe and no fee to earn.
           </p>
         </Faq>
 
@@ -255,8 +289,8 @@ export function HowItWorksPage() {
             </li>
             <li>
               Rebuild every figure from chain events alone: the indexer in the repository reads only on-chain logs and receipts
-              (<span className="num">pnpm export:static</span> reproduces this site's data). Each page shows the block the
-              snapshot was taken at.
+              (<span className="num">pnpm export:static</span> reproduces this site's snapshot). The banner on every page says what it is
+              showing: the latest block this browser read from the chain, and the snapshot it builds on.
             </li>
           </ol>
         </Faq>
