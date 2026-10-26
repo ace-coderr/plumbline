@@ -25,6 +25,27 @@ export interface FaucetInfo {
   deployedAt: string;
 }
 
+/**
+ * The first campaigns and router contracts (v1). Their probe gate counted the parent chain's blocks, so
+ * it opened about every two minutes; v2 counts Orbit L2 blocks. v1 is still on-chain and still holds its
+ * campaigns, bonds and unclaimed rewards, so the app keeps reading it.
+ */
+export interface LegacyDeployment {
+  campaigns: `0x${string}`;
+  router: `0x${string}`;
+  deployBlock: number;
+  deployedAt: string;
+  /** Git tag of the source verified on the explorer for these two contracts. */
+  sourceTag: string;
+}
+
+/** Where the current (v2) campaigns and router were deployed, and the source they were verified from. */
+export interface CurrentDeployment {
+  deployBlock: number;
+  deployedAt: string;
+  sourceTag: string;
+}
+
 export interface DeploymentRecord {
   chainId: number;
   deployed: boolean;
@@ -45,6 +66,10 @@ export interface DeploymentRecord {
   demoTokens: Record<string, TokenInfo>;
   /** Present once the faucet has been deployed. */
   faucet?: FaucetInfo;
+  /** Present once campaigns and router were redeployed: `contracts` then holds v2 and this holds v1. */
+  legacy?: LegacyDeployment;
+  /** Present with `legacy`: provenance of the v2 campaigns and router in `contracts`. */
+  v2?: CurrentDeployment;
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");

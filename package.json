@@ -28,7 +28,8 @@
     "export:static": "tsx scripts/export-static.ts",
     "test": "pnpm --filter @plumbline/shared test",
     "check:scorecard": "tsx scripts/check-scorecard.ts",
-    "deploy:faucet": "tsx scripts/deploy-faucet.ts"
+    "deploy:faucet": "tsx scripts/deploy-faucet.ts",
+    "deploy:v2": "tsx scripts/deploy-v2.ts"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",
