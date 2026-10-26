@@ -27,6 +27,8 @@ const parse = (s: Record<string, string>): Balances => Object.fromEntries(RUNNER
 export class Supervisor {
   private log: Logger;
   private clients: [PublicClient, PublicClient] | null = null;
+  /** True while a tick is running: a second tick (cron and alarm can coincide) is skipped, never run alongside. */
+  private busy = false;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -121,6 +123,16 @@ export class Supervisor {
   }
 
   async tick(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      await this.tickOnce();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async tickOnce(): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
     await this.state.storage.put("lastTickAt", now);
     const killed = (await this.get<boolean>("killed")) ?? false;
@@ -167,8 +179,21 @@ export class Supervisor {
       await this.state.storage.deleteAlarm();
       return;
     }
+    // Spending cannot be watched without balances: after six blind ticks (two minutes) everything stops.
+    if (d.action === "hold") {
+      const blind = ((await this.get<number>("blindTicks")) ?? 0) + 1;
+      await this.state.storage.put("blindTicks", blind);
+      if (blind >= 6) {
+        await this.state.storage.put("blindTicks", 0);
+        await this.halt({ kind: "rpc", reason: "the balances could not be read for two minutes, so spending cannot be watched", day: utcDay(now), windowStart: d.window.start, at: now });
+        await this.state.storage.deleteAlarm();
+        return;
+      }
+      await this.state.storage.setAlarm(Date.now() + TICK_MS);
+      return;
+    }
+    await this.state.storage.put("blindTicks", 0);
     await this.state.storage.setAlarm(Date.now() + TICK_MS);
-    if (d.action === "hold") return;
     // Reaching here means any earlier halt no longer applies.
     await this.state.storage.delete("halt");
 

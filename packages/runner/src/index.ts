@@ -17,6 +17,9 @@ function sameSecret(a: string, b: string): boolean {
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
+/** Workers' edge cache; the DOM typings do not know about `default`. */
+const edgeCache = (caches as unknown as { default: { match(r: Request): Promise<Response | undefined>; put(r: Request, s: Response): Promise<void> } }).default;
+
 const supervisor = (env: Env) => env.SUPERVISOR.get(env.SUPERVISOR.idFromName("main"));
 
 export default {
@@ -28,9 +31,19 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/")) {
+      // Cached for 15 s at the edge: the free daily request quota is shared with the bots, so a flood of
+      // GETs must not reach the Durable Objects.
+      const key = new Request(`${url.origin}/health`);
+      const hit = await edgeCache.match(key);
+      if (hit) return hit;
       const now = Math.floor(Date.now() / 1000);
       const state = (await (await supervisor(env).fetch("https://supervisor/state")).json()) as object;
-      return json({ ...state, scheduleEnabled: schedule.enabled, windows: schedule.windows, inWindow: windowAt(schedule, now) !== null, next: nextWindow(schedule, now) });
+      const res = Response.json(
+        { ...state, scheduleEnabled: schedule.enabled, windows: schedule.windows, inWindow: windowAt(schedule, now) !== null, next: nextWindow(schedule, now) },
+        { headers: { "cache-control": "public, max-age=15" } },
+      );
+      await edgeCache.put(key, res.clone());
+      return res;
     }
     if (req.method === "POST" && ["/kill", "/resume", "/tick"].includes(url.pathname)) {
       if (!env.ADMIN_TOKEN) return json({ error: "admin actions are disabled: ADMIN_TOKEN is not set" }, 503);

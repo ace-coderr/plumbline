@@ -395,6 +395,13 @@ several pollers over both endpoints (`KEEPER_POLLERS`, a quiet period after each
 (36%), about one probe a minute; a failed attempt costs ~56,000 gas, a landed one ~175,000. A longer
 gate window would land more, at the price of another redeploy; that is a decision for the owner.
 
+**Unattended, on Cloudflare (built, not deployed, switched off).** [`packages/runner`](packages/runner/README.md) runs the same
+keeper and makers as scheduled Durable Objects on a free Workers account, from [`bots.schedule.json`](bots.schedule.json)
+(`"enabled": false` as shipped): a daily UTC window, a daily HYPE cap, a floor per wallet, a campaign manager that
+opens a PLUMBUSD campaign from a separate sponsor wallet when none is running, a kill switch, and redacted logs. It never uses the
+deployer key. The host choice and measurements are in [`hosting-spike/`](hosting-spike/README.md); `/status` shows its schedule and the last
+on-chain heartbeat.
+
 ### Running the live indexer (Railway)
 
 The [`Dockerfile`](Dockerfile) and [`railway.json`](railway.json) are for when there is ongoing

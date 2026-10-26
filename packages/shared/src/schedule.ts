@@ -205,3 +205,33 @@ export function lagosLabel(sec: number): string {
 
 /** The UTC date a moment falls on, "2026-10-27": the budget day. */
 export const utcDay = (sec: number): string => new Date(sec * 1000).toISOString().slice(0, 10);
+
+export interface Heartbeat {
+  /** Unix seconds of the newest on-chain sign of life. */
+  at: number;
+  what: string;
+}
+
+/**
+ * The newest thing a runner wallet did on-chain, as far as a browser can read it: a quote written to one
+ * of the runner vaults by its listed quoter, or a probe sent by the keeper. Null when there is none.
+ * This is the wallets' heartbeat, not the Worker's: a Worker that is up but cannot send shows none.
+ */
+export function runnerHeartbeat(
+  s: BotsSchedule,
+  vaults: { address: string; quoter: string; quoteData: { updatedAt: number } }[],
+  probes: { prober: string; ts: number }[],
+): Heartbeat | null {
+  const same = (a: string | null, b: string) => a !== null && a.toLowerCase() === b.toLowerCase();
+  let best: Heartbeat | null = null;
+  const take = (at: number, what: string) => {
+    if (at > 0 && (best === null || at > best.at)) best = { at, what };
+  };
+  for (const [k, label] of [["a", "maker A"], ["b", "maker B"]] as const) {
+    const v = vaults.find((x) => same(s.vaults[k], x.address));
+    const quoter = s.wallets[k === "a" ? "quoterA" : "quoterB"];
+    if (v && same(quoter, v.quoter)) take(v.quoteData.updatedAt, `a quote from ${label}`);
+  }
+  for (const p of probes) if (same(s.wallets.keeper, p.prober)) take(p.ts, "a probe from the keeper");
+  return best;
+}

@@ -7,7 +7,7 @@ import { RUNNER_WALLETS, utcDay, windowAt, type BotsSchedule, type RunnerWallet,
 export type Balances = Record<RunnerWallet, bigint>;
 
 export interface Halt {
-  kind: "cap" | "floor" | "sponsor" | "campaign" | "config";
+  kind: "cap" | "floor" | "sponsor" | "campaign" | "config" | "rpc";
   reason: string;
   /** The UTC day it happened on: a cap halt ends with the day. */
   day: string;

@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { lagosLabel, nextWindow, parseSchedule, utcDay, utcLabel, windowAt, type BotsSchedule } from "../src/schedule.js";
+import { lagosLabel, nextWindow, parseSchedule, runnerHeartbeat, utcDay, utcLabel, windowAt, type BotsSchedule } from "../src/schedule.js";
 
 const shipped = JSON.parse(readFileSync(new URL("../../../bots.schedule.json", import.meta.url), "utf8")) as Record<string, unknown>;
 const clone = (): Record<string, unknown> => JSON.parse(JSON.stringify(shipped)) as Record<string, unknown>;
@@ -89,5 +89,24 @@ describe("windows", () => {
     assert.equal(lagosLabel(t), "Tue 27 Oct 10:00 WAT");
     assert.equal(lagosLabel(T("2026-10-27T23:30:00Z")), "Wed 28 Oct 00:30 WAT", "Lagos can be on the next date");
     assert.equal(utcDay(T("2026-10-27T23:59:59Z")), "2026-10-27");
+  });
+});
+
+describe("runner heartbeat", () => {
+  const s = parseSchedule(shipped);
+  const vault = (address: string, quoter: string, updatedAt: number) => ({ address, quoter, quoteData: { updatedAt } });
+  it("is the newest quote by the listed quoter or probe by the keeper", () => {
+    const hb = runnerHeartbeat(
+      s,
+      [vault(s.vaults.a, s.wallets.quoterA as string, 100), vault(s.vaults.b, s.wallets.quoterB as string, 300)],
+      [{ prober: s.wallets.keeper as string, ts: 200 }],
+    );
+    assert.deepEqual(hb, { at: 300, what: "a quote from maker B" });
+    const hb2 = runnerHeartbeat(s, [vault(s.vaults.a, s.wallets.quoterA as string, 100)], [{ prober: (s.wallets.keeper as string).toLowerCase(), ts: 200 }]);
+    assert.deepEqual(hb2, { at: 200, what: "a probe from the keeper" });
+  });
+  it("ignores a quote written by someone else, a vault never quoted and probes by other wallets", () => {
+    assert.equal(runnerHeartbeat(s, [vault(s.vaults.a, "0x00000000000000000000000000000000000000aa", 999)], [{ prober: "0x00000000000000000000000000000000000000bb", ts: 999 }]), null);
+    assert.equal(runnerHeartbeat(s, [vault(s.vaults.a, s.wallets.quoterA as string, 0)], []), null);
   });
 });
