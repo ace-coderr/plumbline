@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { createPublicClient, http } from "viem";
 import { Link } from "react-router-dom";
-import { blockUrl, elysiumTestnet, historyComplete } from "@plumbline/shared";
+import { blockUrl, elysiumTestnet, historyComplete, lagosLabel, nextWindow, runnerHeartbeat, utcLabel, windowAt } from "@plumbline/shared";
+import { botsSchedule as sched } from "../lib/schedule";
 import { STATIC, useSnapshot } from "../lib/api";
 import { RPC_URLS } from "../lib/chain";
 import { useLive } from "../lib/liveStore";
@@ -69,6 +70,14 @@ export function StatusPage() {
   const running = campaigns.filter((c) => now >= c.state.startTime && now < c.state.startTime + c.state.numEpochs * c.terms.epochLength);
   const okNodes = (nodes.data ?? []).filter((n) => n.ok);
   const complete = historyComplete(live.data);
+  const runnerOn = sched.enabled && sched.windows.length > 0;
+  const cur = windowAt(sched, now);
+  const inWindow = cur !== null;
+  const nxt = nextWindow(sched, now);
+  const probes = live.data.events
+    .filter((e) => e.name === "Probed" && typeof e.args.prober === "string")
+    .map((e) => ({ prober: String(e.args.prober), ts: live.data.blockTimes[e.block] ?? 0 }));
+  const beat = views ? runnerHeartbeat(sched, views.vaults, probes) : null;
 
   const readState =
     live.status === "live" ? "reading the chain" : live.status === "syncing" ? "reading the chain (still scanning history)" : live.status === "error" ? "cannot read the chain" : "starting";
@@ -153,6 +162,44 @@ export function StatusPage() {
           </p>
         </Panel>
       </div>
+
+      <Panel title="Automated runner" className="mt-6" right={<Badge tone={runnerOn ? "pass" : "none"}>{runnerOn ? (inWindow ? "window open" : "scheduled") : "not scheduled"}</Badge>}>
+        {!runnerOn ? (
+          <p className="text-sm leading-6">
+            <strong>Nothing is scheduled.</strong> {sched.enabled ? "The schedule is switched on but has no windows." : "In bots.schedule.json the schedule is switched off."} Any bots
+            running now were started by hand.
+          </p>
+        ) : (
+          <dl className="space-y-2.5 text-sm">
+            {[
+              ["Windows, every day", sched.windows.map((w) => `${w.startUtc} UTC for ${w.minutes} min`).join(" · ")],
+              ["Daily spend cap", `${sched.dailyHypeCap} HYPE`],
+              [inWindow ? "Window open until" : "Next window", inWindow && cur ? `${utcLabel(cur.end)} · ${lagosLabel(cur.end)}` : nxt ? `${utcLabel(nxt.start)} · ${lagosLabel(nxt.start)}` : "none"],
+            ].map(([k, v]) => (
+              <div key={k} className="flex flex-wrap justify-between gap-x-3">
+                <dt className="text-muted">{k}</dt>
+                <dd className="num text-right font-semibold text-ink">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <p className="mt-3 text-sm leading-6">
+          <span className="text-muted">Last heartbeat on-chain: </span>
+          {views === null ? (
+            <span>not readable right now</span>
+          ) : beat ? (
+            <span className="num font-semibold">
+              {age(now - beat.at)} ago ({utcLabel(beat.at)}), {beat.what}
+            </span>
+          ) : (
+            <span className="font-semibold">none seen: no runner wallet has written a quote or sent a probe</span>
+          )}
+        </p>
+        <p className="mt-2 text-xs leading-5 text-muted">
+          The schedule is read from the same file the runner is deployed from. The heartbeat is the newest quote written to the two runner vaults by their listed
+          quoters or probe sent by the keeper wallet, read from the chain. It shows what the wallets did, not whether the host is up.
+        </p>
+      </Panel>
 
       <Panel title="Quote age per vault" className="mt-6" pad={false}>
         {views === null ? (
