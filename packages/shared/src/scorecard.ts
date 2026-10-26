@@ -252,12 +252,41 @@ const isHex = (v: unknown, bytes?: number): v is Hex =>
   typeof v === "string" && /^0x[0-9a-fA-F]*$/.test(v) && (bytes === undefined || v.length === 2 + bytes * 2);
 const rec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** Most text a report may carry, so a pasted file cannot be used to stall the page. */
+export const MAX_REPORT_CHARS = 2_000_000;
+const MAX_ENTRIES = 5_000;
+
+const TOP_KEYS = ["format", "version", "body", "hash", "signer", "signature", "label"];
+const BODY_KEYS = ["chainId", "campaignsContract", "vault", "owner", "pair", "base", "quote", "asOfBlock", "source", "figures"];
+const TOKEN_KEYS = ["symbol", "address", "decimals"];
+const FIGURE_KEYS = ["probes", "passes", "uptime", "medianSpreadBps", "bidDepthQuote", "askDepthBase", "slashes", "epochs"];
+const EPOCH_KEYS = ["campaignId", "epoch", "probes", "passes"];
+const SLASH_KEYS = ["campaignId", "txHash", "slashed"];
+
+/** The first key of `o` that is not in `allowed`, so nothing unverified rides along under a valid hash. */
+const stray = (o: Record<string, unknown>, allowed: string[]): string | undefined => Object.keys(o).find((k) => !allowed.includes(k));
+
 function tokenOk(t: unknown): boolean {
-  return rec(t) && typeof t.symbol === "string" && isAddress(String(t.address)) && isInt(t.decimals);
+  return (
+    rec(t) &&
+    stray(t, TOKEN_KEYS) === undefined &&
+    typeof t.symbol === "string" &&
+    t.symbol.length > 0 &&
+    t.symbol.length <= 32 &&
+    isAddress(String(t.address)) &&
+    isInt(t.decimals) &&
+    t.decimals <= 36
+  );
 }
 
-/** Parse report text. Returns what is wrong in plain words when it is not a usable report. */
+/**
+ * Parse report text. Returns what is wrong in plain words when it is not a usable report. Strict on
+ * purpose: a field this version does not verify is refused, so a report cannot carry an unchecked
+ * claim (say, "audited by ...") under a hash that checks out.
+ */
 export function parseReport(text: string): { ok: true; report: ScorecardReport } | { ok: false; error: string } {
+  if (text.trim() === "") return { ok: false, error: "There is nothing to check: the report is empty." };
+  if (text.length > MAX_REPORT_CHARS) return { ok: false, error: "This is too large to be a report." };
   let v: unknown;
   try {
     v = JSON.parse(text);
@@ -266,13 +295,20 @@ export function parseReport(text: string): { ok: true; report: ScorecardReport }
   }
   if (!rec(v) || v.format !== REPORT_FORMAT) return { ok: false, error: "This is not a Plumbline scorecard report." };
   if (v.version !== REPORT_VERSION) return { ok: false, error: `Unsupported report version ${String(v.version)}.` };
+  const extra = stray(v, TOP_KEYS);
+  if (extra !== undefined) return { ok: false, error: `The report has a field this version does not verify: "${extra.slice(0, 40)}".` };
   const b = v.body;
   if (!rec(b)) return { ok: false, error: "The report has no body." };
   if (!isHex(v.hash, 32)) return { ok: false, error: "The report hash is missing or malformed." };
+  if (v.label !== undefined && (typeof v.label !== "string" || v.label.length > 120)) {
+    return { ok: false, error: "The report's label is malformed." };
+  }
+  const extraBody = stray(b, BODY_KEYS);
+  if (extraBody !== undefined) return { ok: false, error: `The report body has a field this version does not verify: "${extraBody.slice(0, 40)}".` };
   if (!isAddress(String(b.vault)) || !isAddress(String(b.owner)) || !isAddress(String(b.campaignsContract))) {
     return { ok: false, error: "The report's vault, owner or contract address is malformed." };
   }
-  if (!isInt(b.chainId) || !isInt(b.asOfBlock) || typeof b.pair !== "string") {
+  if (!isInt(b.chainId) || !isInt(b.asOfBlock) || typeof b.pair !== "string" || b.pair.length > 80) {
     return { ok: false, error: "The report's chain, block or pair is malformed." };
   }
   if (b.source !== "snapshot" && b.source !== "indexer") return { ok: false, error: "The report's source is malformed." };
@@ -281,21 +317,33 @@ export function parseReport(text: string): { ok: true; report: ScorecardReport }
   if (!rec(f) || !isInt(f.probes) || !isInt(f.passes) || !Array.isArray(f.epochs) || !Array.isArray(f.slashes)) {
     return { ok: false, error: "The report's figures are malformed." };
   }
+  const extraFigure = stray(f, FIGURE_KEYS);
+  if (extraFigure !== undefined) return { ok: false, error: `The report's figures have a field this version does not verify: "${extraFigure.slice(0, 40)}".` };
   const nullableDec = (x: unknown) => x === null || isDec(x);
   if (
-    !(f.uptime === null || typeof f.uptime === "number") ||
-    !(f.medianSpreadBps === null || typeof f.medianSpreadBps === "number") ||
+    !(f.uptime === null || (typeof f.uptime === "number" && f.uptime >= 0 && f.uptime <= 1)) ||
+    !(f.medianSpreadBps === null || (typeof f.medianSpreadBps === "number" && f.medianSpreadBps >= 0)) ||
     !nullableDec(f.bidDepthQuote) ||
     !nullableDec(f.askDepthBase)
   ) {
     return { ok: false, error: "The report's figures are malformed." };
   }
-  const epochsOk = f.epochs.every((e) => rec(e) && isInt(e.campaignId) && isInt(e.epoch) && isInt(e.probes) && isInt(e.passes));
-  const slashesOk = f.slashes.every((s) => rec(s) && isInt(s.campaignId) && isHex(s.txHash, 32) && isDec(s.slashed));
+  if (f.epochs.length > MAX_ENTRIES || f.slashes.length > MAX_ENTRIES) return { ok: false, error: "The report lists too many epochs or slashes." };
+  const epochsOk = f.epochs.every(
+    (e) => rec(e) && stray(e, EPOCH_KEYS) === undefined && isInt(e.campaignId) && isInt(e.epoch) && isInt(e.probes) && isInt(e.passes),
+  );
+  const slashesOk = f.slashes.every(
+    (s) => rec(s) && stray(s, SLASH_KEYS) === undefined && isInt(s.campaignId) && isHex(s.txHash, 32) && isDec(s.slashed),
+  );
   if (!epochsOk || !slashesOk) return { ok: false, error: "The report's epoch or slash entries are malformed." };
-  if (v.signature !== undefined && (!isHex(v.signature) || !isAddress(String(v.signer)))) {
+  const epochKeys = (f.epochs as { campaignId: number; epoch: number }[]).map((e) => `${e.campaignId}:${e.epoch}`);
+  if (new Set(epochKeys).size !== epochKeys.length) return { ok: false, error: "The report lists the same epoch more than once." };
+  const slashKeys = (f.slashes as { txHash: string; campaignId: number }[]).map((s) => `${s.campaignId}:${s.txHash.toLowerCase()}`);
+  if (new Set(slashKeys).size !== slashKeys.length) return { ok: false, error: "The report lists the same slash more than once." };
+  if (v.signature !== undefined && (!isHex(v.signature, 65) || !isAddress(String(v.signer)))) {
     return { ok: false, error: "The report's signature or signer is malformed." };
   }
+  if (v.signature === undefined && v.signer !== undefined) return { ok: false, error: "The report names a signer but has no signature." };
   return { ok: true, report: v as unknown as ScorecardReport };
 }
 
@@ -321,10 +369,12 @@ export interface FigureCheck {
 
 const str = (v: number | string | null): string => (v === null ? "none" : String(v));
 
+/** What differs between two lists, in words; undefined when they hold the same entries the same number of times. */
 function diffList<T>(claimed: T[], actual: T[], key: (t: T) => string): string | undefined {
+  const notes: string[] = [];
+  if (claimed.length !== actual.length) notes.push(`${claimed.length} listed, ${actual.length} on-chain`);
   const c = new Map(claimed.map((x) => [key(x), JSON.stringify(x)]));
   const a = new Map(actual.map((x) => [key(x), JSON.stringify(x)]));
-  const notes: string[] = [];
   for (const [k, v] of c) {
     if (!a.has(k)) notes.push(`${k} is in the report but not on-chain`);
     else if (a.get(k) !== v) notes.push(`${k} differs`);

@@ -44,7 +44,7 @@ export async function scanRange<T>(
   fetchRange: (from: bigint, to: bigint) => Promise<T[]>,
   opts: ScanOptions = {},
 ): Promise<T[]> {
-  const { chunk = 50_000n, minChunk = 500n, retries = 2, retryDelayMs = 400, onProgress } = opts;
+  const { chunk = 50_000n, minChunk = 500n, retries = 4, retryDelayMs = 700, onProgress } = opts;
   if (to < from) return [];
   const out: T[] = [];
 
@@ -75,8 +75,8 @@ export interface ChainScorecard {
   vault: Address;
   /** The vault's owner now, read on-chain. */
   owner: Address;
-  base: { address: Address; decimals: number };
-  quote: { address: Address; decimals: number };
+  base: { address: Address; decimals: number; symbol: string };
+  quote: { address: Address; decimals: number; symbol: string };
   figures: ScorecardFigures;
   /** Blocks read, inclusive. */
   fromBlock: number;
@@ -106,9 +106,11 @@ export async function recomputeFromChain(client: PublicClient, opts: RecomputeOp
     client.readContract({ address: vault, abi: plumbQuoteAbi, functionName: "baseToken" }),
     client.readContract({ address: vault, abi: plumbQuoteAbi, functionName: "quoteToken" }),
   ]);
-  const [baseDecimals, quoteDecimals] = await Promise.all([
+  const [baseDecimals, quoteDecimals, baseSymbol, quoteSymbol] = await Promise.all([
     client.readContract({ address: baseToken, abi: erc20Abi, functionName: "decimals" }),
     client.readContract({ address: quoteToken, abi: erc20Abi, functionName: "decimals" }),
+    client.readContract({ address: baseToken, abi: erc20Abi, functionName: "symbol" }),
+    client.readContract({ address: quoteToken, abi: erc20Abi, functionName: "symbol" }),
   ]);
 
   const results = await scanRange(
@@ -163,8 +165,8 @@ export async function recomputeFromChain(client: PublicClient, opts: RecomputeOp
   return {
     vault,
     owner,
-    base: { address: baseToken, decimals: baseDecimals },
-    quote: { address: quoteToken, decimals: quoteDecimals },
+    base: { address: baseToken, decimals: baseDecimals, symbol: baseSymbol },
+    quote: { address: quoteToken, decimals: quoteDecimals, symbol: quoteSymbol },
     figures: computeFigures(rows, slashes, { base: baseDecimals, quote: quoteDecimals }),
     fromBlock: Number(from),
     toBlock: Number(asOfBlock),

@@ -92,18 +92,16 @@ function buildRows(report: ScorecardReport, checks: ReportChecks, chain: ChainSc
     });
   }
   rows.push({ label: "Vault owner", reported: b.owner, onChain: chain.owner, verdict: eq(b.owner, chain.owner) ? "MATCH" : "MISMATCH" });
-  rows.push({
-    label: "Base token",
-    reported: b.base.address,
-    onChain: chain.base.address,
-    verdict: eq(b.base.address, chain.base.address) && b.base.decimals === chain.base.decimals ? "MATCH" : "MISMATCH",
+  const tokenRow = (label: string, r: ScorecardReport["body"]["base"], c: ChainScorecard["base"]): Row => ({
+    label,
+    reported: `${r.symbol} ${r.address} (${r.decimals} decimals)`,
+    onChain: `${c.symbol} ${c.address} (${c.decimals} decimals)`,
+    verdict: eq(r.address, c.address) && r.decimals === c.decimals && r.symbol === c.symbol ? "MATCH" : "MISMATCH",
   });
-  rows.push({
-    label: "Quote token",
-    reported: b.quote.address,
-    onChain: chain.quote.address,
-    verdict: eq(b.quote.address, chain.quote.address) && b.quote.decimals === chain.quote.decimals ? "MATCH" : "MISMATCH",
-  });
+  rows.push(tokenRow("Base token", b.base, chain.base));
+  rows.push(tokenRow("Quote token", b.quote, chain.quote));
+  const pair = `${chain.base.symbol}/${chain.quote.symbol}`;
+  rows.push({ label: "Pair", reported: b.pair, onChain: pair, verdict: b.pair === pair ? "MATCH" : "MISMATCH" });
   for (const c of compareFigures(b.figures, chain.figures)) {
     rows.push({
       label: FIGURE_LABEL[c.key],
@@ -119,11 +117,29 @@ function buildRows(report: ScorecardReport, checks: ReportChecks, chain: ChainSc
 const looksAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 
 type Parsed = { ok: true; report: ScorecardReport; checks: ReportChecks } | { ok: false; error: string };
+/** `hash` ties a state to the report it was started for, so a slow read can never be shown against another report. */
 type ChainState =
   | { kind: "idle" }
-  | { kind: "running"; fraction: number }
-  | { kind: "done"; chain: ChainScorecard }
-  | { kind: "error"; message: string };
+  | { kind: "running"; fraction: number; hash: string }
+  | { kind: "done"; chain: ChainScorecard; hash: string }
+  | { kind: "error"; title: string; detail: string; retryable: boolean; hash: string };
+
+/** Plain words for why reading the chain failed. No failure ever turns into a result. */
+function explain(err: unknown): { title: string; detail: string; retryable: boolean } {
+  const raw = err instanceof Error ? ((err as { shortMessage?: string }).shortMessage ?? err.message) : String(err);
+  const msg = raw.split("\n")[0] ?? "";
+  if (/429|rate.?limit|too many requests|exceeded/i.test(msg)) {
+    return { title: "The RPC node is rate-limiting this browser.", detail: "Wait a minute, then retry.", retryable: true };
+  }
+  if (/returned no data|execution reverted|is not a contract|could not decode/i.test(msg)) {
+    return { title: "This address does not read as a Plumbline vault.", detail: "The report's vault could not be read on-chain.", retryable: false };
+  }
+  return {
+    title: "Could not read the chain.",
+    detail: `The RPC node did not answer in full (${msg.slice(0, 160) || "no message"}). Check your connection, then retry.`,
+    retryable: true,
+  };
+}
 
 export function VerifyPage() {
   const [text, setText] = useState("");
@@ -145,6 +161,8 @@ export function VerifyPage() {
   }
 
   async function load(file: File) {
+    run.current += 1;
+    if (file.size === 0) return setParsed({ ok: false, error: "That file is empty." });
     if (file.size > MAX_FILE) return setParsed({ ok: false, error: "That file is too large to be a report." });
     const s = await file.text();
     setText(s);
@@ -153,27 +171,45 @@ export function VerifyPage() {
 
   async function recompute(report: ScorecardReport) {
     const mine = ++run.current;
+    const hash = report.hash;
     const from = deployment.deployBlock;
     const span = Math.max(1, report.body.asOfBlock - from);
-    setChain({ kind: "running", fraction: 0 });
+    const current = () => run.current === mine;
+    setChain({ kind: "running", fraction: 0, hash });
     try {
+      // A report cannot be as of a block the chain has not reached; refuse before scanning anything.
+      const head = await chainClient.getBlockNumber();
+      if (BigInt(report.body.asOfBlock) > head) {
+        if (current()) {
+          setChain({
+            kind: "error",
+            hash,
+            retryable: false,
+            title: "This report is as of a block the chain has not reached.",
+            detail: `The report says block ${fmtInt(report.body.asOfBlock)}; the chain is at block ${fmtInt(Number(head))}. A real report cannot be from the future.`,
+          });
+        }
+        return;
+      }
       const result = await recomputeFromChain(chainClient, {
         vault: report.body.vault,
         asOfBlock: BigInt(report.body.asOfBlock),
         onProgress: (b) => {
-          if (run.current === mine) setChain({ kind: "running", fraction: Math.min(1, (Number(b) - from) / span) });
+          if (current()) setChain({ kind: "running", fraction: Math.min(1, (Number(b) - from) / span), hash });
         },
       });
-      if (run.current === mine) setChain({ kind: "done", chain: result });
+      if (current()) setChain({ kind: "done", chain: result, hash });
     } catch (err) {
-      if (run.current === mine) setChain({ kind: "error", message: err instanceof Error ? err.message.split("\n")[0] ?? "failed" : String(err) });
+      if (current()) setChain({ kind: "error", hash, ...explain(err) });
     }
   }
 
   const report = parsed?.ok ? parsed.report : null;
   const sameDeployment =
     report !== null && report.body.chainId === deployment.chainId && eq(report.body.campaignsContract, deployment.contracts.campaigns);
-  const rows = report && parsed?.ok && chain.kind === "done" ? buildRows(report, parsed.checks, chain.chain) : null;
+  // Only a state started for this very report counts; anything else is ignored, never shown.
+  const forThis = report !== null && chain.kind !== "idle" && chain.hash === report.hash;
+  const rows = report && parsed?.ok && forThis && chain.kind === "done" ? buildRows(report, parsed.checks, chain.chain) : null;
   const mismatches = rows?.filter((r) => r.verdict === "MISMATCH").length ?? 0;
   const unsigned = rows?.some((r) => r.verdict === "UNSIGNED") ?? false;
 
@@ -189,6 +225,7 @@ export function VerifyPage() {
           <textarea
             value={text}
             onChange={(e) => {
+              run.current += 1; // a read still in flight belongs to the old text
               setText(e.target.value);
               setParsed(null);
               setChain({ kind: "idle" });
@@ -279,22 +316,39 @@ export function VerifyPage() {
                 <p className="text-sm leading-6">
                   Reads every <span className="num">ProbeResult</span> and <span className="num">Penalized</span> event for the vault from block{" "}
                   <span className="num">{fmtInt(deployment.deployBlock)}</span> to block <span className="num">{fmtInt(report.body.asOfBlock)}</span> in
-                  chunks, then recomputes the figures. It takes about twenty seconds.
+                  chunks, then recomputes the figures. It usually takes under a minute, longer if the RPC node throttles you.
                 </p>
-                <Button variant="primary" disabled={chain.kind === "running"} onClick={() => void recompute(report)}>
-                  {chain.kind === "running" ? "Reading the chain…" : chain.kind === "done" ? "Recompute again" : "Recompute from the chain"}
+                <p className="text-xs leading-5 text-muted">
+                  It trusts the RPC node it reads from (the public Elysium node): a node that returned false logs could mislead it, so for
+                  anything that matters build the app against your own node (<span className="num">VITE_RPC_URL</span>). Signatures from
+                  contract wallets such as multisigs are not supported; only a plain-wallet owner can sign.
+                </p>
+                <Button variant="primary" disabled={forThis && chain.kind === "running"} onClick={() => void recompute(report)}>
+                  {forThis && chain.kind === "running"
+                    ? "Reading the chain…"
+                    : forThis && chain.kind === "done"
+                      ? "Recompute again"
+                      : forThis && chain.kind === "error"
+                        ? "Retry"
+                        : "Recompute from the chain"}
                 </Button>
-                {chain.kind === "running" && (
+                {forThis && chain.kind === "running" && (
                   <div role="progressbar" aria-valuenow={Math.round(chain.fraction * 100)} aria-valuemin={0} aria-valuemax={100} className="h-3 w-full overflow-hidden rounded-[6px] border-2 border-ink bg-paper">
                     <div className="h-full bg-violet" style={{ width: `${Math.max(2, chain.fraction * 100)}%` }} />
                   </div>
                 )}
-                {chain.kind === "error" && <p className="num text-sm font-semibold text-danger-text">Could not read the chain: {chain.message}</p>}
+                {forThis && chain.kind === "error" && (
+                  <div role="alert" className="rounded-[8px] border-2 border-ink bg-paper p-3 text-sm leading-6">
+                    <p className="font-semibold text-danger-text">{chain.title}</p>
+                    <p>{chain.detail}</p>
+                    <p className="font-semibold">Nothing was verified, so no result is shown. {chain.retryable ? "Press Retry." : ""}</p>
+                  </div>
+                )}
               </div>
             )}
           </Panel>
 
-          {rows && chain.kind === "done" && (
+          {rows && forThis && chain.kind === "done" && (
             <Panel
               title="Result"
               pad={false}
@@ -304,7 +358,7 @@ export function VerifyPage() {
                 </span>
               }
             >
-              <div className="border-b-2 border-ink px-3 py-3">
+              <div className="border-b-2 border-ink px-3 py-3" role="status">
                 {mismatches === 0 ? (
                   <p className="text-sm font-semibold">
                     <Badge tone="pass">all match</Badge> Every figure in the report matches the chain.

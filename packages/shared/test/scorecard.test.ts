@@ -309,3 +309,73 @@ describe("compareFigures", () => {
     assert.match(checks.find((c) => c.key === "slashes")?.detail ?? "", /on-chain but not in the report/);
   });
 });
+
+describe("parseReport refuses what it cannot verify", () => {
+  const good = () => JSON.parse(JSON.stringify(buildReport(sampleBody()))) as Record<string, any>;
+  const verdict = (mutate: (r: Record<string, any>) => void) => {
+    const r = good();
+    mutate(r);
+    return parseReport(JSON.stringify(r));
+  };
+  const error = (mutate: (r: Record<string, any>) => void) => {
+    const p = verdict(mutate);
+    return p.ok ? null : p.error;
+  };
+
+  it("says so for an empty report, and for one that is too large", () => {
+    assert.match((parseReport("   ") as { error: string }).error, /empty/);
+    assert.match((parseReport(" ".repeat(2_000_001) + "{}") as { error: string }).error, /too large/);
+  });
+
+  it("refuses a field it does not verify at any level, so no claim rides under a valid hash", () => {
+    assert.match(error((r) => (r.audited = "by a firm")) ?? "", /does not verify: "audited"/);
+    assert.match(error((r) => (r.body.audited = true)) ?? "", /body has a field this version does not verify/);
+    assert.match(error((r) => (r.body.figures.rating = "AAA")) ?? "", /figures have a field/);
+    assert.match(error((r) => (r.body.base.note = "x")) ?? "", /token details are malformed/);
+    assert.match(error((r) => (r.body.figures.epochs[0].extra = 1)) ?? "", /malformed/);
+  });
+
+  it("refuses the same epoch or slash listed twice", () => {
+    assert.match(error((r) => r.body.figures.epochs.push({ ...r.body.figures.epochs[0] })) ?? "", /same epoch more than once/);
+    assert.match(
+      error((r) => r.body.figures.slashes.push({ ...r.body.figures.slashes[0], txHash: r.body.figures.slashes[0].txHash.toUpperCase().replace("0X", "0x") })) ?? "",
+      /same slash more than once/,
+    );
+  });
+
+  it("refuses out-of-range figures, long strings and half-signed reports", () => {
+    assert.ok(error((r) => (r.body.figures.uptime = 1.5)));
+    assert.ok(error((r) => (r.body.figures.medianSpreadBps = -1)));
+    assert.ok(error((r) => (r.body.base.symbol = "A".repeat(33))));
+    assert.ok(error((r) => (r.body.pair = "P".repeat(81))));
+    assert.ok(error((r) => (r.label = "L".repeat(121))));
+    assert.match(error((r) => (r.signer = OWNER)) ?? "", /no signature/);
+    assert.ok(error((r) => ((r.signer = OWNER), (r.signature = "0x" + "ab".repeat(64))))); // 64 bytes, not 65
+  });
+
+  it("still accepts a normal report with a label and a signature", () => {
+    const ok = verdict((r) => {
+      r.label = "Our MM";
+      r.signer = OWNER;
+      r.signature = "0x" + "ab".repeat(65);
+    });
+    assert.equal(ok.ok, true);
+  });
+});
+
+describe("compareFigures cannot be fooled by repeats", () => {
+  it("flags an epoch or slash listed twice even though the set of entries is the same", () => {
+    const actual = computeFigures([row(1, 0, 1), row(1, 1, 2)], [{ campaignId: 1, txHash: TX, slashed: "5" }], DEC);
+    const claimed: ScorecardFigures = {
+      ...actual,
+      epochs: [...actual.epochs, actual.epochs[0] as (typeof actual.epochs)[number]],
+      slashes: [...actual.slashes, actual.slashes[0] as (typeof actual.slashes)[number]],
+    };
+    const checks = compareFigures(claimed, actual);
+    const e = checks.find((c) => c.key === "epochs");
+    const s = checks.find((c) => c.key === "slashes");
+    assert.equal(e?.match, false);
+    assert.match(e?.detail ?? "", /3 listed, 2 on-chain/);
+    assert.equal(s?.match, false);
+  });
+});
