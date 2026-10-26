@@ -13,4 +13,5 @@ export * from "./chainScorecard.js";
 export * from "./liveReader.js";
 export * from "./liveMerge.js";
 export * from "./derive.js";
+export * from "./schedule.js";
 export * from "./faucet.js";

@@ -1,0 +1,41 @@
+{
+  "enabled": false,
+  "windows": [{ "startUtc": "09:00", "minutes": 240 }],
+  "dailyHypeCap": 0.13,
+  "floorHype": {
+    "keeper": 0.0003,
+    "quoterA": 0.0003,
+    "quoterB": 0.0003,
+    "sponsor": 0.0004,
+    "makerA": 0.00004,
+    "makerB": 0.00004
+  },
+  "wallets": {
+    "keeper": "0xde8554954841D2fAbCacAddfAD95899c8BF3E989",
+    "quoterA": "0x415cC195D814661F4A4B7C7b70F790433eb1CaE5",
+    "quoterB": "0xE83F05536a7B737D75D2A77cDEF72D10d2Dc65d1",
+    "sponsor": null,
+    "makerA": "0xE071a74989784bce375af084069C3aB9b8D872eF",
+    "makerB": "0xA12c18aF4faA2aA266Ac705Ad1D6E1A644Ff32C3"
+  },
+  "vaults": {
+    "a": "0x714dAee721B93b3cc6B81eB9a2290a92E331C0e0",
+    "b": "0x57Ef55E39Bdd8195580dFFbb522c1DCf23EB78B2"
+  },
+  "campaign": {
+    "epochLengthSeconds": 300,
+    "rewardPerEpochPlumbusd": 1,
+    "bondPlumbusd": 1,
+    "minRemainingMinutes": 20,
+    "maxSpreadBps": 30,
+    "minDepthBase": "0.0005",
+    "minDepthQuote": "0.02",
+    "minProbeIntervalSeconds": 13,
+    "probeFeeBps": 10
+  },
+  "maker": {
+    "A": { "spreadBps": 12, "size": "0.0008", "skewBps": 4, "refreshMs": 1000 },
+    "B": { "spreadBps": 24, "size": "0.0006", "skewBps": 4, "refreshMs": 1000 }
+  },
+  "referenceCoin": "HYPE"
+}
