@@ -32,7 +32,8 @@ by tokens the vault actually holds**. Rewards are split by points. A quote that 
 gets its maker's bond slashed the moment a taker hits it.
 
 The design depends on Elysium's 100–200ms blocks and near-zero gas: quotes expire after 2 seconds, so
-makers re-post every block, and probes run every few seconds per campaign. Neither cadence is
+makers re-post every second or two, and a campaign's probe gate is built to open about every 9 seconds
+(a keeper has landed about one probe a minute so far; see *Running the bots*). Neither cadence is
 affordable or even physically possible on a one-second chain.
 
 <!-- deployment:start -->

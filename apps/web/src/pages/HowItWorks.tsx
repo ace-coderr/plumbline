@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import {
   DEPLOYED_SOURCE_TAG,
+  LEGACY_SOURCE_TAG,
+  campaignSources,
   REPO_URL,
   addressUrl,
   deployedSourceUrl,
@@ -77,6 +79,7 @@ function Faq({ q, children }: { q: string; children: React.ReactNode }) {
 
 export function HowItWorksPage() {
   const campaigns = deployment.contracts.campaigns;
+  const legacy = campaignSources.find((s) => s.version === "v1");
   return (
     <Page density="expressive">
       <PageHeader
@@ -101,17 +104,17 @@ export function HowItWorksPage() {
             <RunningLine />
           </li>
           <li>
-            <strong>Every payout in the demo campaigns (#1 and #2), rewards and probe fees, was in PLUMBUSD</strong>, a mintable demo token,
+            <strong>Every payout in the demo campaigns (v1 #1 and v1 #2), rewards and probe fees, was in PLUMBUSD</strong>, a mintable demo token,
             not real money. Nobody was paid anything of value, and the project has no funding obligation to anyone. A campaign opened since by
             another wallet is funded by that wallet.
           </li>
           <li>
             <strong>PLUMBUSD is a mintable demo token</strong> standing in for USDC, which is not faucet-available on Elysium
-            testnet. Only the Plumbline deployer can mint it.
+            testnet. Only the Plumbline deployer can mint it; the <Link to="/faucet" className="link">faucet</Link> hands out 100 per address per day.
           </li>
           <li>
             <strong>Both market makers were run by the project author</strong>, from two wallets funded by the same deployer
-            wallet, quoting with the bot in this repository. There are no independent participants yet.
+            wallet, quoting with the bot in this repository. <strong>No outside market maker has run on Plumbline yet.</strong>
           </li>
           <li>
             <strong>The slash was staged.</strong> A third vault was deliberately set up to advertise size it did not hold, and
@@ -120,11 +123,23 @@ export function HowItWorksPage() {
           <li>
             <strong>What is real:</strong> the contracts, every probe, every settlement and the slash are transactions anyone
             can open on the explorer: the{" "}
-            <Ext href={addressUrl(campaigns)}>campaigns contract</Ext>, the{" "}
-            <Ext href={txUrl(SLASH_TX)}>slash</Ext>, and the verified source at tag{" "}
+            <Ext href={addressUrl(campaigns)}>campaigns contract (v2)</Ext>
+            {legacy && (
+              <>
+                {" "}
+                and the <Ext href={addressUrl(legacy.campaigns)}>legacy v1 contract</Ext> that ran the first two campaigns
+              </>
+            )}
+            , the <Ext href={txUrl(SLASH_TX)}>slash</Ext> (on v1), and the verified source at tag{" "}
             <Ext href={deployedSourceUrl()}>
               <span className="num">{DEPLOYED_SOURCE_TAG}</span>
             </Ext>
+            {LEGACY_SOURCE_TAG && (
+              <>
+                {" "}
+                (v1: <span className="num">{LEGACY_SOURCE_TAG}</span>)
+              </>
+            )}
             .
           </li>
         </ul>
@@ -202,7 +217,8 @@ export function HowItWorksPage() {
 
         <Step n={5} title="Why this only works on Elysium">
           <p>
-            Checking constantly means two transactions per maker every second and a probe every few seconds. With{" "}
+            Checking constantly means roughly one to two transactions per maker every second, and a probe gate that is designed to
+            open every ~9 seconds (measured so far on the live chain: a keeper lands about one probe a minute). With{" "}
             <N>~140ms</N> blocks, a {MAX_AGE}-second quote has about 15 chances to be re-stamped before it expires; on a chain
             with one-second blocks it has 2, and one delayed transaction empties the book. The numbers, measured from this
             run's receipts, are on <Link to="/economics" className="link">Economics</Link>.
