@@ -1,7 +1,21 @@
-**Live site: [plumbline-elysium.vercel.app](https://plumbline-elysium.vercel.app)** · a static site: a snapshot
-of the testnet run, plus whatever its browser reads from the chain live; wallet actions send real
-transactions ([what that means](#public-site-a-snapshot-plus-a-live-chain-reader)) ·
-[how it works](https://plumbline-elysium.vercel.app/how-it-works)
+**Live site: [plumbline-elysium.vercel.app](https://plumbline-elysium.vercel.app)** · a static site whose
+browser reads the chain itself; wallet actions send real testnet transactions ·
+[how it works](https://plumbline-elysium.vercel.app/how-it-works) ·
+[try it](https://plumbline-elysium.vercel.app/try) · [faucet](https://plumbline-elysium.vercel.app/faucet) ·
+[status](https://plumbline-elysium.vercel.app/status)
+
+> **What this is, plainly.** A testnet demo on Elysium (chain 99801). Nothing here has monetary value.
+> * **Live (read from the chain by your browser):** campaigns, vaults and their quotes, and every probe,
+>   score, slash, settlement and bond since the first deployment, worked out from the contracts' events.
+> * **Snapshot (taken 2026-10-20, labelled as such on the pages):** gas and cost figures, the HYPE price,
+>   per-hour quote-update rates and fills from before the snapshot. They need receipts or a price feed
+>   that a browser does not read.
+> * **PLUMBUSD is a demo asset**: a mintable token with no value, used because testnet USDC cannot be
+>   had. The [faucet](https://plumbline-elysium.vercel.app/faucet) hands it out.
+> * **No outside market maker has run on Plumbline yet.** Every quote, bond and probe so far came from the
+>   project's own wallets and bots. Another wallet has opened a campaign and created a vault on the legacy
+>   contract, but no outside maker has quoted, been probed or earned anything.
+> * The contracts are unaudited.
 
 <p align="center">
   <img src="apps/web/public/og-default.png" alt="plumbline" width="640" />
@@ -101,6 +115,12 @@ The seeded market is **WHYPE/PLUMBUSD**. PLUMBUSD ("Plumbline Demo Dollar",
 ERC-20 that its owner can mint freely. It exists because canonical USDC is not faucet-available on
 Elysium testnet, and this demo was funded with 0.0492 HYPE and nothing else. Every surface that shows a
 PLUMBUSD market labels it **demo asset**; it is never rendered as USDC.
+
+* **Faucet.** [`PlumbFaucet`](contracts/src/test/PlumbFaucet.sol) holds PLUMBUSD and sends 100 to any
+  address once per 24 hours (`/faucet`). Token, amount and cooldown are immutable and there are no owner
+  functions; anyone can add to the pool. The cooldown is per address, so many addresses can claim many
+  times: it limits casual repeat claims, not a determined drainer. It also needs a little testnet HYPE for
+  gas, which the project does not give out ([the Elysium faucet](https://testnet.elysium.kinetiq.xyz/faucet/) does).
 
 * The canonical **WHYPE/USDC market is deployed and ready**: its pair is registered on-chain by an
   empty vault (see the table above) and canonical USDC stays in `packages/shared`. It is simply unseeded.
@@ -300,19 +320,32 @@ pnpm --filter @plumbline/web build:static           # vite build --mode static +
   the live API: this is a second mode, not a replacement.
 * **The live reader** (`packages/shared/src/liveReader.ts`, `apps/web/src/lib/liveStore.ts`) reads, from
   the primary Elysium RPC with the Conduit node as fallback (short timeouts, backoff on rate limits):
-  current campaign terms and state, every vault with its live quote and balances (contract views, one
-  round of multicalls), and the campaigns contract's events after the snapshot block (chunked `getLogs`,
-  cached in IndexedDB when the browser allows it). `liveMerge.ts` merges that into the snapshot's shapes,
-  so a campaign created seconds ago appears on `/campaigns`, a new campaign's page loads from the chain,
-  a vault created after the snapshot gets a scorecard, and the footer counts vaults quoting right now.
-  First load shows the snapshot at once and goes live in a few seconds; a second visit reuses the cache.
+  current campaign terms and state on **both campaigns contracts** (v1 legacy and v2), every vault with
+  its live quote and balances (contract views, one round of multicalls), and **every event of both
+  contracts since the first deploy block** (chunked `getLogs`, five million-block chunks at a time,
+  cached in IndexedDB when the browser allows it), plus vault fills and router failed fills after the
+  snapshot block. `liveMerge.ts` and `derive.ts` turn that into the shapes the pages use, so a campaign
+  created seconds ago appears on `/campaigns`, a new campaign's page loads from the chain, a vault
+  created after the snapshot gets a scorecard, and the footer counts vaults quoting right now. First load
+  shows the snapshot at once, then takes about 15–20 s on the public nodes to read the whole history; a
+  second visit resumes from the cache.
 * **The banner says which it is:** "Live from chain, latest block N, updated Xs ago"; the history scan's
   progress while it is still reading; or "RPC unreachable, showing snapshot from <date>" with a retry
   countdown. Until the chain answers, the snapshot is shown and labelled, never an empty list.
-* **What is still the snapshot's** (not recomputed in the browser): uptime timelines, spread and depth
-  medians over probes (probe *counts* and uptime do include new probes), fills, the 24-hour quote-update
-  count, gas and block-time figures, and per-epoch scores of campaigns that predate the snapshot beyond
-  what events add. The pages say "through the snapshot" where it matters.
+* **Worked out in the browser from the events** once the whole history is held
+  ([`derive.ts`](packages/shared/src/derive.ts), the indexer's own rules): campaign leaderboards, epochs,
+  bonds, slashes and rewards; each market's verified uptime, spread and depth medians and last quotes;
+  uptime timelines; a maker's scores and earnings; the depth report and its probe log; probe totals, first
+  and last probe times; per-vault pass rates; quote writes (the vaults' own counters); the block time
+  (two block timestamps 200,000 blocks apart). `pnpm check:derived` recomputes all of that at the
+  snapshot's own block with the browser's code and compares it with the snapshot file: 33 of 33 checks
+  match. Until the history has been read (or if a node fails), the pages show the snapshot plus the
+  events after it, and the banner says so.
+* **Still the snapshot's, labelled "snapshot of <date>" on the pages:** gas per probe and per quote
+  update, probe spend and gas price (receipts), the HYPE/USD price, per-hour quote-update rates, and fills
+  from before the snapshot block. Fills after it come from the chain.
+* Probes in a window: "24h" figures use the chain's own time. With no probe in the last 24 hours they read
+  as "none", not as a stale number.
 * Rolling windows (24h, 7d) measured back from export time would all hold the same probes, so static
   pages show one window, labelled: the campaign window, from the first campaign's start to the last
   one's end. The live (indexer) build keeps the window toggles.
@@ -331,6 +364,35 @@ pnpm --filter @plumbline/web build:static           # vite build --mode static +
 
 To refresh the snapshot after new on-chain activity: rerun `pnpm export:static`, commit, push. Until
 then the browser fills the gap itself.
+
+### Running the bots (`pnpm live:bots`)
+
+```bash
+pnpm build:bots     # once
+pnpm live:bots      # keeper + maker A + maker B under a spend cap
+```
+
+One command starts the keeper and both maker bots from `.env`, with prefixed logs on the terminal and in
+`logs/live-bots-<UTC date>.log` (git-ignored). It watches the three gas wallets and **stops everything**
+when they have spent `LIVE_BOTS_DAILY_HYPE` (default 0.002) since 00:00 UTC, resuming the next UTC day, or when
+any of them falls below `LIVE_BOTS_STOP_BELOW_HYPE` (default 0.0002), after which it stays stopped until
+someone funds the wallet. Keys stay in `.env`; nothing here puts them anywhere else. The keeper probes every
+active campaign on the current (v2) campaigns contract unless `LIVE_BOTS_CAMPAIGNS` names some.
+
+**What it costs, measured on the live chain** (2026-10-26, two bots plus the keeper, public RPC):
+
+| | measured |
+|---|---|
+| a quote update (`setQuote`) | ~40,000 gas, 0.000004 HYPE |
+| two maker bots quoting | 0.000921 HYPE in ~125 s, i.e. **0.0265 HYPE an hour** (paced by the public RPC limit at roughly one update per second each, not the configured 500 ms) |
+| keeper probing v2 | about 0.0017 HYPE an hour at the landing rate below, plus settles |
+| **1 hour / 4 hours / 12 hours, bots and keeper** | **≈ 0.029 / 0.114 / 0.342 HYPE** |
+
+**Landing probes on v2 is hard.** The v2 gate stays open for about 1.1 s, and a poll or a send takes
+about half a second each on the public nodes. The first keeper (one poller) landed 0 of 7 attempts. With
+several pollers over both endpoints (`KEEPER_POLLERS`, a quiet period after each attempt) it landed 5 of 14
+(36%), about one probe a minute; a failed attempt costs ~56,000 gas, a landed one ~175,000. A longer
+gate window would land more, at the price of another redeploy; that is a decision for the owner.
 
 ### Running the live indexer (Railway)
 
@@ -371,7 +433,9 @@ Keeper: `GET :8787/health`, `GET :8787/stats`.
   vault on-chain, the vault's tokens, owner and pair, and each figure. A report with a field it does not
   verify, a repeated epoch, or a block the chain has not reached is refused. If the chain cannot be read
   it says so, shows no result and offers Retry; it never turns a failure into a MATCH. Signatures from
-  contract wallets (multisigs) are not supported.
+  contract wallets (multisigs) are not supported. A report names a campaigns contract: one that names the
+  current (v2) contract covers both v1 and v2; one made before v2 existed names v1 and is checked against
+  v1 alone.
 * Probe results are public on-chain. Privacy here means a vault address not tied to a team's identity, and
   choosing who receives the report. It does not hide on-chain data. Looking a vault up is a web request:
   this site's host (which serves a file named by the address) and the RPC nodes `/verify` reads from can
@@ -500,5 +564,8 @@ through most of campaign #1's window; probes only happen while a keeper is awake
   campaigns per vault keep routing, probing, settling and slashing within block gas.
 * **Reentrancy.** Every value-moving path is `nonReentrant` and follows checks-effects-interactions.
   Rewards use pull payments.
+* **No independent market maker has used it.** The vaults, quotes, campaigns and probes shown were run by
+  the project's own wallets and bots; the claim that makers can earn from it is untested by anyone
+  outside.
 * **Testnet only.** Contracts are unaudited. Keys in `.env` are throwaway testnet keys and never
   committed.

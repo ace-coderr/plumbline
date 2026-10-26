@@ -178,6 +178,20 @@ function StatusBar() {
   );
 }
 
+/**
+ * On every page: what is real here and what is not. Testnet, a demo token with no value, no outside
+ * market maker yet, and which figures are read from the chain and which are a labelled snapshot.
+ */
+export function TestnetNote({ className = "" }: { className?: string }) {
+  return (
+    <p className={`text-xs leading-5 text-muted ${className}`}>
+      Elysium testnet demo; nothing here has monetary value. PLUMBUSD is a demo token. No outside market maker has run on Plumbline yet: the quotes and
+      probes you see came from the project's own wallets and bots. Figures are read from the chain by your browser; the few that cannot be (gas, price,
+      older fills) say "snapshot" and give its date.
+    </p>
+  );
+}
+
 export function Layout() {
   return (
     <div className="min-h-screen pb-14">
@@ -216,6 +230,7 @@ export function Layout() {
           </div>
         )}
         <Outlet />
+        <TestnetNote className="no-print mt-10 max-w-3xl border-t-2 border-ink pt-4" />
       </main>
       <StatusBar />
     </div>

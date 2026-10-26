@@ -31,7 +31,8 @@ function useFaucet(account: Address | undefined) {
     queryKey: ["faucet", f?.address, account ?? null],
     enabled: f !== null,
     refetchInterval: 12_000,
-    retry: 1,
+    // A dead node already costs a few seconds inside the transport; do not double it here. The poll tries again.
+    retry: false,
     queryFn: async (): Promise<FaucetState> => {
       if (!f) throw new Error("no faucet is deployed");
       const [pool, amount, cooldown, nextClaimAt, token, block, hype] = await Promise.all([

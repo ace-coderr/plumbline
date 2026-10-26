@@ -350,6 +350,10 @@ export function ReportPage() {
                 testnet. The probes, inventory checks and transactions are real; the quote asset is not money.
               </p>
             )}
+            <p className={`${demo ? "mt-3" : "mt-8 border-t-2 border-ink pt-4"} text-xs leading-5 text-muted`}>
+              Elysium testnet demo. No outside market maker has run on Plumbline yet: so far the vaults in this report were run by the project's own wallets and bots.
+              The figures are worked out from on-chain events by this page; any that come from a snapshot say so.
+            </p>
           </div>
         </article>
 
