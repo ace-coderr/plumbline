@@ -145,8 +145,8 @@ function DeployVault({ onCreated }: { onCreated: (vault: Address) => void }) {
         <GasCost gas={MEASURED_GAS.createVault} label="costs" />
       </div>
       <p className="mt-2 text-2xs text-muted">
-        The most expensive action in the protocol: the factory deploys a whole contract. PLUMBUSD can only be minted by the
-        Plumbline deployer, so a new WHYPE/PLUMBUSD vault can fund its ask side with WHYPE but not its bid side.
+        The most expensive action in the protocol: the factory deploys a whole contract. To fund the bid side of a
+        WHYPE/PLUMBUSD vault, claim PLUMBUSD from the <Link to="/faucet" className="link">faucet</Link>; the ask side needs WHYPE (wrapped HYPE).
       </p>
       <TxStatus state={tx.state} />
       {created && (

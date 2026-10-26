@@ -11,6 +11,9 @@ import { EconomicsPage } from "./pages/Economics";
 import { HowItWorksPage } from "./pages/HowItWorks";
 import { ScorecardPage } from "./pages/Scorecard";
 import { VerifyPage } from "./pages/Verify";
+import { FaucetPage } from "./pages/Faucet";
+import { TryPage } from "./pages/Try";
+import { StatusPage } from "./pages/Status";
 import { LiveBridge } from "./components/LiveBridge";
 import { NotFound } from "./pages/NotFound";
 
@@ -30,6 +33,9 @@ export function App() {
         <Route path="/how-it-works" element={<HowItWorksPage />} />
         <Route path="/scorecard/:vault?" element={<ScorecardPage />} />
         <Route path="/verify" element={<VerifyPage />} />
+        <Route path="/faucet" element={<FaucetPage />} />
+        <Route path="/try" element={<TryPage />} />
+        <Route path="/status" element={<StatusPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route element={<BareLayout />}>

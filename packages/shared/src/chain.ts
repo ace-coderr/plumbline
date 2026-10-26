@@ -8,7 +8,7 @@ export const ELYSIUM_TESTNET = {
   explorerUrl: "https://elysium.kinetiq.xyz/testnet-explorer",
   /** Blockscout backend behind the explorer; used for contract verification and tx lookups. */
   explorerApiUrl: "https://testnet-api.elysium.kinetiq.xyz/api",
-  faucetUrl: "https://elysium.kinetiq.xyz/testnet-faucet",
+  faucetUrl: "https://testnet.elysium.kinetiq.xyz/faucet/",
   multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11",
 } as const;
 
