@@ -15,6 +15,7 @@ const NAV = [
   { to: "/maker", label: "Maker", end: false },
   { to: "/economics", label: "Economics", end: false },
   { to: "/scorecard", label: "Scorecard", end: false },
+  { to: "/verify", label: "Verify", end: false },
   { to: "/how-it-works", label: "How it works", end: false },
 ] as const;
 

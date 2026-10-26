@@ -10,6 +10,7 @@ import { ReportPage } from "./pages/Report";
 import { EconomicsPage } from "./pages/Economics";
 import { HowItWorksPage } from "./pages/HowItWorks";
 import { ScorecardPage } from "./pages/Scorecard";
+import { VerifyPage } from "./pages/Verify";
 import { NotFound } from "./pages/NotFound";
 
 export function App() {
@@ -25,6 +26,7 @@ export function App() {
         <Route path="/economics" element={<EconomicsPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
         <Route path="/scorecard/:vault?" element={<ScorecardPage />} />
+        <Route path="/verify" element={<VerifyPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       <Route element={<BareLayout />}>
