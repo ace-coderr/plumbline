@@ -1,3 +1,4 @@
+import { deployment } from "@plumbline/shared";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "@plumbline/shared/node";
@@ -48,7 +49,8 @@ interface Persisted {
 const RECENT = 100;
 
 export class Stats {
-  private readonly path = join(dataDir(), "keeper-stats.json");
+  // Per campaigns contract: campaign numbers restart at 1 on each, so stats must not mix.
+  private readonly path = join(dataDir(), `keeper-stats-${deployment.contracts.campaigns.slice(2, 10).toLowerCase()}.json`);
   totals: KeeperTotals = { startedAt: Math.floor(Date.now() / 1000), settles: 0, claims: 0, claimedWei: "0", gasUsed: 0, costWei: "0" };
   campaigns = new Map<number, CampaignStats>();
   /** Wall-clock times of successful probes, for rate calculations. */

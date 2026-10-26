@@ -10,6 +10,10 @@ export interface KeeperConfig {
   host: string;
   /** How often to poll probe gates, ms. Elysium blocks land every 100-200ms. */
   pollMs: number;
+  /** Gate pollers running side by side, taking the poll endpoints in turn. */
+  pollers: number;
+  /** Endpoints for gate polls, comma-separated; empty uses the main endpoint and the send endpoint. */
+  pollUrls: string[];
   /** How often to rediscover campaigns and refresh their state, ms. */
   refreshMs: number;
   /** Restrict to these campaign ids; empty means every active campaign. */
@@ -40,6 +44,11 @@ export function loadConfig(): KeeperConfig {
     port: envNumber("KEEPER_PORT", 8787),
     host: envString("KEEPER_HOST", "0.0.0.0"),
     pollMs: envNumber("KEEPER_POLL_MS", 150),
+    pollers: envNumber("KEEPER_POLLERS", 1),
+    pollUrls: envString("KEEPER_POLL_URLS", "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     refreshMs: envNumber("KEEPER_REFRESH_MS", 5_000),
     campaignIds: parseIds(envString("KEEPER_CAMPAIGNS", "")),
     autoSettle: envBool("KEEPER_AUTO_SETTLE", true),

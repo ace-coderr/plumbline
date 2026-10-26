@@ -27,12 +27,21 @@ async function main(): Promise<void> {
     sendUrl === cfg.rpcUrl
       ? client
       : createPublicClient({ chain: elysiumTestnet, transport: http(sendUrl, { retryCount: 3, timeout: 10_000 }), pollingInterval: 100 });
+  // Gate pollers take the endpoints in turn: KEEPER_POLL_URLS, else the main and the send endpoint.
+  const pollUrls = cfg.pollUrls.length ? cfg.pollUrls : [...new Set([cfg.rpcUrl, sendUrl])];
+  const extra = pollUrls.filter((u) => u !== cfg.rpcUrl && u !== sendUrl);
+  if (extra.length) throttleRpc(extra, envNumber("KEEPER_RPC_PER_SECOND", 3), (m) => log.warn(m));
+  const pollClients = pollUrls.map((u) =>
+    u === cfg.rpcUrl
+      ? client
+      : createPublicClient({ chain: elysiumTestnet, transport: http(u, { retryCount: 1, timeout: 8_000 }), batch: { multicall: false }, pollingInterval: 100 }),
+  );
   const account = privateKeyToAccount(cfg.privateKey);
   const sender = new TxSender(account, sendClient, elysiumTestnet.id, log);
   const stats = new Stats();
   stats.load();
 
-  const keeper = new Keeper(cfg, client, sender, stats, log);
+  const keeper = new Keeper(cfg, client, sender, stats, log, pollClients);
   await keeper.start();
 
   const app = buildServer(keeper, stats, account.address);

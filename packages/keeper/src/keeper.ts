@@ -15,6 +15,8 @@ interface Track {
   lastProbeAt: number;
   inFlight: boolean;
   settling: boolean;
+  /** No new attempt before this time (ms): pollers still seeing an opening that this probe just used up would resend. */
+  quietUntil?: number;
 }
 
 /**
@@ -38,6 +40,8 @@ export class Keeper {
     private readonly sender: TxSender,
     private readonly stats: Stats,
     private readonly log: Logger,
+    /** Clients (usually one per RPC endpoint) the gate pollers take turns on. Defaults to `client`. */
+    private readonly pollClients: PublicClient[] = [client],
   ) {}
 
   /** Chain time estimate in seconds (local clock corrected by the last observed block). */
@@ -54,7 +58,14 @@ export class Keeper {
     await this.sender.resync();
     await this.refresh();
     this.loop("refresh", this.cfg.refreshMs, () => this.refresh());
-    this.loop("gates", this.cfg.pollMs, () => this.pollGates());
+    // The gate stays open for about a second (8 L2 blocks) and a poll takes half a second on a public
+    // node, so one poller misses most openings. Several, spread over the endpoints and started
+    // staggered, see an opening within a fraction of a round trip.
+    const pollers = Math.max(1, this.cfg.pollers);
+    for (let i = 0; i < pollers; i++) {
+      const c = this.pollClients[i % this.pollClients.length] ?? this.client;
+      setTimeout(() => this.loop(`gates-${i}`, this.cfg.pollMs, () => this.pollGates(c)), Math.round((i * this.cfg.pollMs) / pollers));
+    }
     if (this.cfg.autoSettle) this.loop("settle", 2_000, () => this.settleDue());
     this.loop("claim", 60_000, () => this.claimFees());
     this.loop("persist", 10_000, async () => this.stats.save());
@@ -141,19 +152,20 @@ export class Keeper {
   }
 
   /** One multicall per poll: which running campaigns have an open gate right now. */
-  private async pollGates(): Promise<void> {
+  private async pollGates(client: PublicClient): Promise<void> {
     const now = this.now();
     // The gate cannot open inside minProbeInterval, so do not spend RPC requests asking.
     const candidates = this.activeTracks().filter(
       (t) =>
         !t.inFlight &&
+        Date.now() >= (t.quietUntil ?? 0) &&
         now >= t.startTime &&
         now < t.startTime + t.numEpochs * t.epochLength &&
         now >= t.lastProbeAt + t.minProbeInterval - 1,
     );
     this.lastPollAt = Date.now();
     if (candidates.length === 0) return;
-    const open = await this.client.multicall({
+    const open = await client.multicall({
       contracts: candidates.map(
         (t) =>
           ({
@@ -167,7 +179,8 @@ export class Keeper {
     });
     candidates.forEach((t, i) => {
       const r = open[i];
-      if (r && r.status === "success" && r.result === true) void this.probe(t);
+      // Re-checked here: another poller may have started a probe while this poll was in flight.
+      if (r && r.status === "success" && r.result === true && !t.inFlight && Date.now() >= (t.quietUntil ?? 0)) void this.probe(t);
     });
   }
 
@@ -225,6 +238,7 @@ export class Keeper {
       }
     } finally {
       t.inFlight = false;
+      t.quietUntil = Date.now() + 2_000;
     }
   }
 
