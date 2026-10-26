@@ -9,9 +9,11 @@ import {
   mergeCampaigns,
   mergeEconomics,
   mergeMaker,
+  mergeUptime,
   mergeMarket,
   mergeMarkets,
   mergeReport,
+  mergeReportProbes,
   mergeScorecard,
   snapshotFile,
   type LiveData,
@@ -165,10 +167,11 @@ export const useMarket = (pair: string): UseQueryResult<MarketDetail> =>
   useMerged<MarketDetail>({ key: ["market", pair], path: `/markets/${pair}`, merge: (s, l, n) => mergeMarket(s, pair, l, n), poll: "fast" });
 
 export const useUptime = (pair: string, window: string): UseQueryResult<UptimeResponse> =>
-  useQuery({
-    queryKey: ["uptime", pair, window],
-    queryFn: () => apiGet<UptimeResponse>(`/markets/${pair}/uptime?window=${window}`),
-    ...slow(5_000),
+  useMerged<UptimeResponse>({
+    key: ["uptime", pair, window],
+    path: `/markets/${pair}/uptime?window=${window}`,
+    merge: (s, l, n) => mergeUptime(s, pair, window, l, n),
+    poll: 5_000,
   });
 
 /**
@@ -208,14 +211,14 @@ export const useMaker = (address: string | undefined): UseQueryResult<MakerProfi
   useMerged<MakerProfile>({
     key: ["maker", address],
     path: address ? `/makers/${address}` : null,
-    merge: (s, l) => mergeMaker(s, address ?? "", l),
+    merge: (s, l, n) => mergeMaker(s, address ?? "", l, n),
     enabled: Boolean(address),
     poll: "fast",
     retry: false,
   });
 
 export const useReport = (token: string, window: string): UseQueryResult<DepthReport> =>
-  useMerged<DepthReport>({ key: ["report", token, window], path: `/reports/${token}?window=${window}`, merge: (s, l, n) => mergeReport(s, token, l, n) });
+  useMerged<DepthReport>({ key: ["report", token, window], path: `/reports/${token}?window=${window}`, merge: (s, l, n) => mergeReport(s, token, l, n, window) });
 
 export const useReportProbes = (
   token: string,
@@ -231,6 +234,9 @@ export const useReportProbes = (
       }
       // The snapshot carries the whole probe log once; probes since come from the chain. Page locally.
       const all = await snapshotOrNull<{ total: number; probes: ProbeView[] }>(`/reports/${token}/probes`);
+      // With the whole history held, the log comes from the chain's events (gas from the snapshot where it measured it).
+      const derived = mergeReportProbes(all?.probes ?? null, token, getLive().data, liveNow());
+      if (derived) return { total: derived.length, probes: derived.slice(offset, offset + limit) };
       if (all === null) throw new ApiError(404, "not in this snapshot");
       const report = await snapshotOrNull<DepthReport>(`/reports/${token}?window=${SNAPSHOT_WINDOW}`);
       const s = getLive();
@@ -243,7 +249,7 @@ export const useReportProbes = (
   });
 
 export const useEconomics = (): UseQueryResult<EconomicsResponse> =>
-  useMerged<EconomicsResponse>({ key: ["economics"], path: "/economics", merge: (s, l) => mergeEconomics(s, l), poll: "fast" });
+  useMerged<EconomicsResponse>({ key: ["economics"], path: "/economics", merge: (s, l, n) => mergeEconomics(s, l, n), poll: "fast" });
 
 export interface KeeperStats {
   keeper: string;

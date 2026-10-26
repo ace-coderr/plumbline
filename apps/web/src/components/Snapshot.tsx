@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { blockUrl, chainNow } from "@plumbline/shared";
+import { blockUrl, chainNow, historyComplete } from "@plumbline/shared";
 import { STATIC, useSnapshot } from "../lib/api";
 import { useLive } from "../lib/liveStore";
 import { dateTime, fmtInt } from "../lib/format";
@@ -37,6 +37,14 @@ function BlockLink({ block }: { block: number }) {
       #{fmtInt(block)}
     </a>
   );
+}
+
+/** "snapshot of 20 Oct 06:52 UTC": for figures events cannot give, so they say where they come from. */
+export function useSnapshotLabel(): string {
+  const live = useLive();
+  const meta = useSnapshot();
+  const snap = live.snapshot ?? (meta.data ? { block: meta.data.block, blockTimestamp: meta.data.blockTimestamp } : null);
+  return snap ? `snapshot of ${utc(snap.blockTimestamp)}` : "snapshot";
 }
 
 /**
@@ -82,7 +90,14 @@ export function SnapshotStamp() {
       </>
     );
     detail = live.data.scanComplete ? (
-      <>history before block {snap ? fmtInt(snap.block) : "?"} from the snapshot of {sinceDate}</>
+      historyComplete(live.data) ? (
+        <>
+          all {fmtInt(live.data.events.length)} campaign events since block {fmtInt(live.data.historyFrom)} read from the chain · gas figures, quote counts and fills
+          before block {snap ? fmtInt(snap.block) : "?"} are from the snapshot of {sinceDate}
+        </>
+      ) : (
+        <>history before block {snap ? fmtInt(snap.block) : "?"} from the snapshot of {sinceDate}</>
+      )
     ) : (
       <>
         reading history: events scanned through block {fmtInt(live.data.scannedThrough)} of {fmtInt(v.head)} · older history from the snapshot of {sinceDate}

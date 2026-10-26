@@ -21,7 +21,7 @@ export const RPC_URLS: string[] = [
 export const chainClient: PublicClient = createPublicClient({
   chain: elysiumTestnet,
   transport: fallback(
-    RPC_URLS.map((url) => http(url, { timeout: 12_000, retryCount: 1, retryDelay: 300 })),
+    RPC_URLS.map((url) => http(url, { timeout: 12_000, retryCount: 1, retryDelay: 300, batch: { batchSize: 40, wait: 16 } })),
     { retryCount: 2, retryDelay: 1_500 },
   ),
   batch: { multicall: true },

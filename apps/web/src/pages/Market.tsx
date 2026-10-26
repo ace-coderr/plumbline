@@ -387,7 +387,7 @@ export function MarketPage() {
           </Panel>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Recent fills" pad={false} right={STATIC ? <span>through the snapshot; later fills are not listed</span> : undefined}>
+            <Panel title="Recent fills" pad={false} right={STATIC ? <span>up to the snapshot, plus any the chain shows after its block</span> : undefined}>
               {fills.length === 0 ? (
                 <Empty>No fills yet.</Empty>
               ) : (

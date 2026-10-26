@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createPublicClient, http } from "viem";
 import { Link } from "react-router-dom";
-import { blockUrl, elysiumTestnet } from "@plumbline/shared";
+import { blockUrl, elysiumTestnet, historyComplete } from "@plumbline/shared";
 import { STATIC, useSnapshot } from "../lib/api";
 import { RPC_URLS } from "../lib/chain";
 import { useLive } from "../lib/liveStore";
@@ -68,6 +68,7 @@ export function StatusPage() {
   const lastProbeAt = campaigns.reduce((m, c) => Math.max(m, c.state.lastProbeAt), 0);
   const running = campaigns.filter((c) => now >= c.state.startTime && now < c.state.startTime + c.state.numEpochs * c.terms.epochLength);
   const okNodes = (nodes.data ?? []).filter((n) => n.ok);
+  const complete = historyComplete(live.data);
 
   const readState =
     live.status === "live" ? "reading the chain" : live.status === "syncing" ? "reading the chain (still scanning history)" : live.status === "error" ? "cannot read the chain" : "starting";
@@ -210,12 +211,25 @@ export function StatusPage() {
                 ["Campaign terms and state", "live", views ? `block ${fmtInt(views.head)}` : "not readable yet"],
                 ["Vaults, balances, current quotes", "live", views ? `block ${fmtInt(views.head)}` : "not readable yet"],
                 [
-                  "Probes, slashes, settlements after the snapshot",
-                  "live",
-                  live.data.scannedThrough > 0 ? `events read through block ${fmtInt(live.data.scannedThrough)}${live.data.scanComplete ? "" : " (scan in progress)"}` : "not scanned yet",
+                  "Probes, slashes, settlements, bonds, rewards: scores, uptime, timelines, spread and depth medians",
+                  complete ? "live" : "snapshot",
+                  complete
+                    ? `${fmtInt(live.data.events.length)} events from block ${fmtInt(live.data.historyFrom)} through ${fmtInt(live.data.scannedThrough)}`
+                    : live.data.scannedThrough > 0
+                      ? `events read through block ${fmtInt(live.data.scannedThrough)}${live.data.scanComplete ? "" : " (scan in progress)"}; until the history is complete these are the snapshot's plus what came after it`
+                      : "not scanned yet",
                 ],
-                ["Everything up to the snapshot block", "snapshot", snap ? `block ${fmtInt(snap.block)}, ${utc(snap.blockTimestamp)}` : "unknown"],
-                ["Uptime timelines, spread and depth medians, fills, gas figures", "snapshot", snap ? `block ${fmtInt(snap.block)}, ${utc(snap.blockTimestamp)}` : "unknown"],
+                [
+                  "Fills and failed fills after the snapshot block",
+                  "live",
+                  live.data.scanComplete ? `read through block ${fmtInt(live.data.scannedThrough)}` : "scan in progress",
+                ],
+                ["Fills before the snapshot block", "snapshot", snap ? `block ${fmtInt(snap.block)}, ${utc(snap.blockTimestamp)}` : "unknown"],
+                [
+                  "Gas per probe and per quote update, probe spend, gas price, HYPE price, per-hour quote rates",
+                  "snapshot",
+                  snap ? `block ${fmtInt(snap.block)}, ${utc(snap.blockTimestamp)}` : "unknown",
+                ],
               ].map(([what, from, asOf]) => (
                 <tr key={what}>
                   <Td>{what}</Td>

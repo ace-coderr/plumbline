@@ -8,6 +8,7 @@ import {
 } from "@plumbline/shared";
 import { STATIC, useEconomics, useKeeper } from "../lib/api";
 import { ago, fmtDec, fmtInt, fmtNum, fmtUsd } from "../lib/format";
+import { useSnapshotLabel } from "../components/Snapshot";
 import { ErrorNote, Field, Input, Loading, N, Page, PageHeader, Panel, Stat, StatRow, Table, Td, Th } from "../components/ui";
 
 const REFRESH_MS = 500;
@@ -15,6 +16,7 @@ const REFRESH_MS = 500;
 export function EconomicsPage() {
   const econ = useEconomics();
   const keeper = useKeeper();
+  const snapLabel = useSnapshotLabel();
   const [gwei, setGwei] = useState(String(ONE_SECOND_CHAIN.gasPriceGwei));
   // Null until edited: the comparison gas token then costs the same as HYPE, so the page starts from
   // equal token prices and any dollar difference comes from gas, not from an assumed price gap.
@@ -76,20 +78,28 @@ export function EconomicsPage() {
             <br />a chain that <span className="marker">keeps up</span>.
           </>
         }
-        sub={`Every figure in the Elysium column is measured from this run's receipts${
-          STATIC ? ", as of the snapshot (the probe count also includes probes the chain has recorded since)" : ""
+        sub={`Gas and price figures in the Elysium column are measured from this run's receipts${
+          STATIC ? ` and are the ${snapLabel}; probe counts, quote writes and block time are read from the chain now` : ""
         }. The other column is a set of assumptions you can change.`}
       />
 
       <StatRow>
         <Stat label="Probes run" value={fmtInt(e.totalProbes)} sub={e.lastProbeAt ? `last ${ago(e.lastProbeAt)}` : undefined} />
-        <Stat label="Gas per probe" value={fmtInt(e.probeGasAvg)} sub="mean, all probes" />
-        <Stat label="Probe spend" value={fmtDec(totalHype, 3)} sub={`HYPE · ${elyUsd ? fmtUsd(totalHype * elyUsd) : "price unavailable"}`} />
-        <Stat label="Quote updates" value={fmtInt(e.quoteUpdates)} sub={`${fmtInt(e.quoteUpdateGasAvg)} gas each`} />
+        <Stat label="Gas per probe" value={fmtInt(e.probeGasAvg)} sub={STATIC ? `mean · ${snapLabel}` : "mean, all probes"} />
+        <Stat
+          label="Probe spend"
+          value={fmtDec(totalHype, 3)}
+          sub={`HYPE · ${elyUsd ? fmtUsd(totalHype * elyUsd) : "price unavailable"}${STATIC ? ` · ${snapLabel}` : ""}`}
+        />
+        <Stat
+          label="Quote updates"
+          value={fmtInt(e.quoteUpdates)}
+          sub={STATIC ? `quote writes, from each vault's counter · ${fmtInt(e.quoteUpdateGasAvg)} gas each (${snapLabel})` : `${fmtInt(e.quoteUpdateGasAvg)} gas each`}
+        />
         <Stat
           label="Block time"
           value={`${fmtNum(e.avgBlockTimeMs, 0)}ms`}
-          sub={STATIC ? "last 10k blocks before the snapshot" : "last 10k blocks, live"}
+          sub={STATIC ? "last 200k blocks, read from the chain (the snapshot's figure until it answers)" : "last 10k blocks, live"}
         />
         <Stat
           label="Keeper"
