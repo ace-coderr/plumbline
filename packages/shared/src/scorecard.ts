@@ -163,7 +163,7 @@ export interface ReportBody {
   /** Figures cover everything up to and including this block. */
   asOfBlock: number;
   /** Where the figures were read from when the report was made. */
-  source: "snapshot" | "indexer";
+  source: "snapshot" | "indexer" | "browser";
   figures: ScorecardFigures;
 }
 
@@ -311,7 +311,7 @@ export function parseReport(text: string): { ok: true; report: ScorecardReport }
   if (!isInt(b.chainId) || !isInt(b.asOfBlock) || typeof b.pair !== "string" || b.pair.length > 80) {
     return { ok: false, error: "The report's chain, block or pair is malformed." };
   }
-  if (b.source !== "snapshot" && b.source !== "indexer") return { ok: false, error: "The report's source is malformed." };
+  if (b.source !== "snapshot" && b.source !== "indexer" && b.source !== "browser") return { ok: false, error: "The report's source is malformed." };
   if (!tokenOk(b.base) || !tokenOk(b.quote)) return { ok: false, error: "The report's token details are malformed." };
   const f = b.figures;
   if (!rec(f) || !isInt(f.probes) || !isInt(f.passes) || !Array.isArray(f.epochs) || !Array.isArray(f.slashes)) {

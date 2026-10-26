@@ -199,7 +199,8 @@ export interface CampaignView {
   probeFeeBps: number;
   makerBond: string;
   referencePrice: Address;
-  openedTx: Hash;
+  /** The opening transaction; null for a campaign read from the chain before its event was found. */
+  openedTx: Hash | null;
   currentEpoch: number;
   settledEpochs: number;
   totalProbes: number;

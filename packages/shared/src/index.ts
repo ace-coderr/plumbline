@@ -9,3 +9,5 @@ export * from "./snapshot.js";
 export * from "./links.js";
 export * from "./scorecard.js";
 export * from "./chainScorecard.js";
+export * from "./liveReader.js";
+export * from "./liveMerge.js";
