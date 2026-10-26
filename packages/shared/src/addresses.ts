@@ -37,6 +37,14 @@ export const deployment = {
       "name": "Plumbline Demo Dollar",
       "decimals": 6
     }
+  },
+  "faucet": {
+    "address": "0x9aA03bd42eaAe9d9f48F12CD42166Fb7B6e40155",
+    "token": "0x3A3a8e3D34BB815cc211976C17ccf3376C97d750",
+    "amount": "100000000",
+    "cooldown": 86400,
+    "deployBlock": 16377982,
+    "deployedAt": "2026-10-26T15:49:08.000Z"
   }
 } as const;
 
