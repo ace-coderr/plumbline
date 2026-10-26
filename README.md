@@ -320,9 +320,25 @@ backfills from the deploy block, so the full history rebuilds itself on first bo
 | `GET /campaigns`, `GET /campaigns/:id` | terms, leaderboard, epoch history, probes, penalties |
 | `GET /reports/:token?window=7d` | the public depth report, with per-epoch coverage; `window=all` as above |
 | `GET /reports/:token/probes?offset&limit` | full probe log behind a report |
+| `GET /vaults/:address/scorecard` | a vault's ProbeResult rows and slashes, for `/scorecard` |
 | `GET /economics` | probe and quote gas from receipts, cadence, block time |
 
 Keeper: `GET :8787/health`, `GET :8787/stats`.
+
+## Scorecards and verification
+
+* **`/scorecard/<vault>`** shows what probes verified about one vault: uptime, median spread, verified
+  depth, slashes and each epoch, from the snapshot or the live indexer. A vault no probe has checked shows
+  dashes, not zeros. Teams can label a vault ("Our MM"); the label stays in the browser's localStorage and
+  is never sent anywhere or put on-chain. A report downloads as JSON (figures, block, keccak256 hash) or
+  prints; the vault's owner can sign the hash with `personal_sign`.
+* **`/verify`** takes a report and recomputes every figure from the chain with chunked `getLogs`, without
+  the indexer, then marks each as MATCH or MISMATCH, including whether the signer owns the vault.
+* Probe results are public on-chain. Privacy here means a vault address not tied to a team's identity, and
+  choosing who receives the report. It does not hide on-chain data.
+* `pnpm test` runs the scoring, hashing, signing and log-scanning tests. `pnpm check:scorecard` compares
+  every vault in the snapshot with the chain; `pnpm export:static --scorecards-only` regenerates the
+  per-vault files at the snapshot's own block.
 
 ## 60-second demo
 
