@@ -24,15 +24,18 @@ affordable or even physically possible on a one-second chain.
 <!-- deployment:start -->
 ## Deployment (Elysium testnet, chain 99801)
 
-Deployed at block 11477778 (2026-10-19T07:55:09.000Z). Contracts are verified on the
+Deployed at block 11477778 (2026-10-19T07:55:09.000Z). Campaigns and router were redeployed as **v2** at block 16395396 (2026-10-26T16:25:18.000Z), against the same factory, to fix the probe gate (see below). **v1 stays on-chain as legacy**: its campaigns, bonds and unclaimed rewards are still there, the app still reads it, new campaigns open on v2. Contracts are verified on the
 [Elysium explorer](https://elysium.kinetiq.xyz/testnet-explorer). Freshness window 2s, withdrawal timelock 30s. Demo campaign: **#2**.
 
 | contract | address |
 |---|---|
-| Verified source (git tag) | [`deployed-99801-2026-10-19`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-2026-10-19) |
+| Verified source, v2 (git tag) | [`deployed-99801-v2-2026-10-26`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-v2-2026-10-26) |
+| Verified source, v1 legacy (git tag) | [`deployed-99801-2026-10-19`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-2026-10-19) |
 | PlumbQuoteFactory | [`0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4`](https://elysium.kinetiq.xyz/testnet-explorer/address/0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4) |
-| PlumbRouter | [`0x6E1937B16a8B23401133350a84cb6062c03848a6`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x6E1937B16a8B23401133350a84cb6062c03848a6) |
-| PlumbCampaigns | [`0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c`](https://elysium.kinetiq.xyz/testnet-explorer/address/0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c) |
+| PlumbRouter (v2) | [`0x1A3b2F8fd1afb4C787aEcdd3b45EDC569f3dc673`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x1A3b2F8fd1afb4C787aEcdd3b45EDC569f3dc673) |
+| PlumbCampaigns (v2) | [`0xFbC9e2b62132bDdc0C4bC02799D5D5A3e943D786`](https://elysium.kinetiq.xyz/testnet-explorer/address/0xFbC9e2b62132bDdc0C4bC02799D5D5A3e943D786) |
+| PlumbRouter (v1, legacy) | [`0x6E1937B16a8B23401133350a84cb6062c03848a6`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x6E1937B16a8B23401133350a84cb6062c03848a6) |
+| PlumbCampaigns (v1, legacy) | [`0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c`](https://elysium.kinetiq.xyz/testnet-explorer/address/0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c) |
 | PlumbQuote · maker A, WHYPE/PLUMBUSD (12 bps) | [`0x714dAee721B93b3cc6B81eB9a2290a92E331C0e0`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x714dAee721B93b3cc6B81eB9a2290a92E331C0e0) |
 | PlumbQuote · maker B, WHYPE/PLUMBUSD (24 bps) | [`0x57Ef55E39Bdd8195580dFFbb522c1DCf23EB78B2`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x57Ef55E39Bdd8195580dFFbb522c1DCf23EB78B2) |
 | PlumbQuote · WHYPE/USDC market (registered, unseeded) | [`0x7D59e73a049680F9476c704e7142f9B7EA83F6Dd`](https://elysium.kinetiq.xyz/testnet-explorer/address/0x7D59e73a049680F9476c704e7142f9B7EA83F6Dd) |
@@ -76,10 +79,20 @@ through most of campaign #1.
 [`PlumbGateArbSys.t.sol`](contracts/test/PlumbGateArbSys.t.sol) runs the gate against a mock ArbSys
 while `block.number` stands still.
 
-**Status.** The live deployment predates the fix and still gates on `block.number`. The fix ships with
-the next deployment (`PlumbCampaigns`, and `PlumbRouter`, which pins its address), which needs about
-0.0006 HYPE. The deployed, verified source is tag
-[`deployed-99801-2026-10-19`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-2026-10-19).
+**Status.** The fix is deployed. `PlumbCampaigns` and `PlumbRouter` (which pins its address) were
+redeployed as **v2** against the same factory, so every existing vault carries over; the factory and
+vaults bind neither contract. The first pair stays on-chain as **v1 (legacy)** with its campaigns, bonds
+and rewards, and the site still reads it. New campaigns open on v2. Verified sources:
+[`deployed-99801-v2-2026-10-26`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-v2-2026-10-26)
+(v2) and [`deployed-99801-2026-10-19`](https://github.com/ace-coderr/plumbline/tree/deployed-99801-2026-10-19) (v1).
+Campaign ids inside the app are `v1 #n` and `v2 #n`, since both contracts count from 1.
+
+**Checked on the live v2 contract.** A throwaway 2-epoch campaign was opened on v2 and `probeGateOpen`
+polled for 70 s: it opened 3 times (at 4.4 s, 20.2 s and 54.9 s), where the 1-in-64 odds predict about 8,
+so the sample is too short to confirm the 9 s mean, but it shows the gate moving on L2 blocks, not
+every 12–15 s. A probe sent right after the gate opened reverted (`GateClosed`): the transaction took
+longer to land than the ~1.1 s the gate stays open, so a prober has to send within about a second of an
+opening, which a slow RPC round-trip makes hard.
 
 ## Demo assets
 
@@ -174,18 +187,18 @@ its entropy from recent L2 block hashes instead, read from ArbSys (see [Found on
 * Being memoryless, the wait gives a maker nothing to time a fake quote against: nobody, keepers
   included, knows an opening is coming until the block that creates it.
 
-**Measured on the live deployment, which predates the ArbSys gate.** On Arbitrum chains the EVM's
+**Measured on the v1 (legacy) deployment, which predates the ArbSys gate.** On Arbitrum chains the EVM's
 `block.number` is the *parent chain's* block number (HyperEVM, about 67.35M), not the L2 block
 number (about 11.8M), and `blockhash()` follows it. That number advances in jumps of roughly 15 every
 12–15 s rather than every ~150 ms L2 block. The gate therefore reshuffles once per jump, opening
 with probability 1 − (63/64)^8 ≈ 11.8% per jump: a mean wait of about 8.5 jumps, roughly 110 s.
-The live keeper landed one probe every 1.5–2 minutes. Timing is still unpredictable; it is just
+The v1 keeper landed one probe every 1.5–2 minutes. Timing was still unpredictable; it was just
 about 5× less frequent than designed.
 
-The fix, in this repository, reads the L2 block number and hash from the `ArbSys` precompile
-(`arbBlockNumber()` / `arbBlockHash()`) so the gate reshuffles every L2 block: a mean wait of 64
-blocks, about 9 s. It changes `PlumbCampaigns` (and therefore `PlumbRouter`, which pins its address),
-so it ships with the next deployment. The deployed, verified source is tag `deployed-99801-2026-10-19`.
+v2 reads the L2 block number and hash from the `ArbSys` precompile (`arbBlockNumber()` /
+`arbBlockHash()`) so the gate reshuffles every L2 block: a mean wait of 64 blocks, about 9 s. It changes
+`PlumbCampaigns` (and therefore `PlumbRouter`, which pins its address). The v2 source is tag
+`deployed-99801-v2-2026-10-26`; v1 is `deployed-99801-2026-10-19`.
 
 ### HyperCore seam
 

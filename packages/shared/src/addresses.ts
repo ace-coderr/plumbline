@@ -9,8 +9,8 @@ export const deployment = {
   "deployer": "0x2465E835FAB3B9F07d6478177416611D11F46E03",
   "contracts": {
     "factory": "0xaDF8B6b8F39321C81ca52deF1d3605845A5BcEa4",
-    "router": "0x6E1937B16a8B23401133350a84cb6062c03848a6",
-    "campaigns": "0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c"
+    "router": "0x1A3b2F8fd1afb4C787aEcdd3b45EDC569f3dc673",
+    "campaigns": "0xFbC9e2b62132bDdc0C4bC02799D5D5A3e943D786"
   },
   "params": {
     "maxAge": 2,
@@ -45,6 +45,18 @@ export const deployment = {
     "cooldown": 86400,
     "deployBlock": 16377982,
     "deployedAt": "2026-10-26T15:49:08.000Z"
+  },
+  "legacy": {
+    "campaigns": "0xdf532CfBA2B047FD3fA3Df1f879617DF17eBAD1c",
+    "router": "0x6E1937B16a8B23401133350a84cb6062c03848a6",
+    "deployBlock": 11477778,
+    "deployedAt": "2026-10-19T07:55:09.000Z",
+    "sourceTag": "deployed-99801-2026-10-19"
+  },
+  "v2": {
+    "deployBlock": 16395396,
+    "deployedAt": "2026-10-26T16:25:18.000Z",
+    "sourceTag": "deployed-99801-v2-2026-10-26"
   }
 } as const;
 
