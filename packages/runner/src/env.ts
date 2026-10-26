@@ -1,6 +1,7 @@
 import { getAddress, isHex, type Hex } from "viem";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { deployment, type BotsSchedule, type RunnerWallet } from "@plumbline/shared";
+import { expandSecrets, makeRedactor } from "./core/redact.js";
 
 /**
  * Bindings and secrets. The secrets are Cloudflare Worker secrets, set by the owner and never in this
@@ -17,6 +18,8 @@ export interface Env {
   MAKER_A_KEY?: string;
   MAKER_B_KEY?: string;
   ADMIN_TOKEN?: string;
+  /** A private Conduit node URL with its API key in the path. Used first; the public nodes are the fallback. */
+  CONDUIT_RPC_URL?: string;
 }
 
 /** Which secret holds which wallet's key. */
@@ -29,12 +32,16 @@ export const WALLET_SECRET: Record<RunnerWallet, keyof Env> = {
   makerB: "MAKER_B_KEY",
 };
 
-export const SECRET_NAMES = [...Object.values(WALLET_SECRET), "ADMIN_TOKEN"] as const;
+export const SECRET_NAMES = [...Object.values(WALLET_SECRET), "ADMIN_TOKEN", "CONDUIT_RPC_URL"] as const;
 
-/** Every secret value present, for the log redactor. */
+/** Every secret value present, and the parts of a URL secret that carry its key, for the redactor. */
 export function secretValues(env: Env): string[] {
-  return SECRET_NAMES.map((n) => env[n as keyof Env]).filter((v): v is string => typeof v === "string" && v.length > 0);
+  const raw = SECRET_NAMES.map((n) => env[n as keyof Env]).filter((v): v is string => typeof v === "string" && v.length > 0);
+  return expandSecrets(raw);
 }
+
+/** The redactor for this Worker's secrets. */
+export const redactorFor = (env: Env): ((s: string) => string) => makeRedactor(secretValues(env));
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 

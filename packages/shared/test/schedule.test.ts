@@ -10,8 +10,8 @@ const T = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 describe("bots.schedule.json", () => {
   const s = parseSchedule(shipped);
 
-  it("ships switched off, with one four-hour daily window", () => {
-    assert.equal(s.enabled, false);
+  it("ships with one four-hour daily window, starting at 13:00 UTC", () => {
+    assert.equal(s.windows[0]?.startUtc, "13:00");
     assert.equal(s.windows.length, 1);
     assert.equal(s.windows[0]?.minutes, 240);
   });

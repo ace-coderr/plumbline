@@ -2,9 +2,8 @@ import type { PublicClient } from "viem";
 import type { RunnerWallet } from "@plumbline/shared";
 import { schedule } from "./config.js";
 import { Signer, makeClients } from "./chain.js";
-import { accountFor, secretValues, type Env } from "./env.js";
-import { makeRedactor } from "./core/redact.js";
-import { errText, makeLogger, type Logger } from "./core/log.js";
+import { accountFor, redactorFor, type Env } from "./env.js";
+import { errText, makeLogger, setRedactor, withFields, type Logger, safeJson } from "./core/log.js";
 import { cancelQuote, makerTick, newMakerState, type MakerState } from "./maker.js";
 import { keeperBurst, newKeeperState, type KeeperState } from "./keeper.js";
 
@@ -17,6 +16,12 @@ interface RoleConfig {
   windowEnd: number;
   running: boolean;
   startedAt: number;
+}
+
+/** The node order a maker sends through. `slot` spreads the two makers over the public nodes. */
+export function sendOrder(clients: PublicClient[], slot: 0 | 1): PublicClient[] {
+  if (clients.length >= 3) return slot === 0 ? [clients[0], clients[1], clients[2]] as PublicClient[] : [clients[0], clients[2], clients[1]] as PublicClient[];
+  return slot === 0 ? [clients[0], clients[1]] as PublicClient[] : [clients[1], clients[0]] as PublicClient[];
 }
 
 const QUOTER: Record<"makerA" | "makerB", RunnerWallet> = { makerA: "quoterA", makerB: "quoterB" };
@@ -40,7 +45,7 @@ export class Role {
   private maker: MakerState = newMakerState();
   private keeper: KeeperState = newKeeperState();
   private signer: Signer | null = null;
-  private clients: [PublicClient, PublicClient] | null = null;
+  private clients: PublicClient[] | null = null;
   private log: Logger;
   private lastCheck = 0;
   private lastOk = 0;
@@ -50,7 +55,9 @@ export class Role {
     private readonly state: DurableObjectState,
     private readonly env: Env,
   ) {
-    this.log = makeLogger(makeRedactor(secretValues(env)));
+    const redact = redactorFor(env);
+    setRedactor(redact);
+    this.log = makeLogger(redact);
   }
 
   private async cfg(): Promise<RoleConfig | null> {
@@ -62,8 +69,8 @@ export class Role {
     if (path === "/start") {
       const body = (await req.json()) as { role: RoleName; runId: number; windowEnd: number };
       const cur = await this.cfg();
-      if (cur?.running && cur.runId === body.runId) return Response.json({ ok: true, already: true });
-      if (cur?.running && cur.runId > body.runId) return Response.json({ ok: false, reason: "a newer run is active" }, { status: 409 });
+      if (cur?.running && cur.runId === body.runId) return safeJson({ ok: true, already: true });
+      if (cur?.running && cur.runId > body.runId) return safeJson({ ok: false, reason: "a newer run is active" }, { status: 409 });
       this.maker = newMakerState();
       this.keeper = newKeeperState();
       this.signer = null;
@@ -73,22 +80,22 @@ export class Role {
       await this.state.storage.put("cfg", { role: body.role, runId: body.runId, windowEnd: body.windowEnd, running: true, startedAt: Date.now() } satisfies RoleConfig);
       await this.state.storage.setAlarm(Date.now() + 50);
       this.log.info("role started", { role: body.role, runId: body.runId });
-      return Response.json({ ok: true });
+      return safeJson({ ok: true });
     }
     if (path === "/stop") {
       await this.finish("stopped by the supervisor");
-      return Response.json({ ok: true });
+      return safeJson({ ok: true });
     }
     const cfg = await this.cfg();
     const alarm = await this.state.storage.getAlarm();
-    return Response.json({
+    return safeJson({
       role: cfg?.role ?? null,
       running: cfg?.running ?? false,
       runId: cfg?.runId ?? null,
       windowEnd: cfg?.windowEnd ?? null,
       alarmSet: alarm !== null,
       maker: cfg?.role === "keeper" ? undefined : { ticks: this.maker.ticks, sent: this.maker.sent, failed: this.maker.failed, lastSendAt: this.maker.lastSendAt, lastError: this.maker.lastError },
-      keeper: cfg?.role === "keeper" ? { bursts: this.keeper.bursts, probesSent: this.keeper.probesSent, probesLanded: this.keeper.probesLanded, probesReverted: this.keeper.probesReverted, settles: this.keeper.settles, failed: this.keeper.failed, lastProbeAt: this.keeper.lastProbeAt, lastError: this.keeper.lastError } : undefined,
+      keeper: cfg?.role === "keeper" ? { bursts: this.keeper.bursts, pollsOk: this.keeper.pollsOk, pollsFailed: this.keeper.pollsFailed, probesSent: this.keeper.probesSent, probesLanded: this.keeper.probesLanded, probesReverted: this.keeper.probesReverted, settles: this.keeper.settles, failed: this.keeper.failed, lastProbeAt: this.keeper.lastProbeAt, lastError: this.keeper.lastError } : undefined,
     });
   }
 
@@ -109,18 +116,21 @@ export class Role {
   }
 
   private makerCtx(role: "makerA" | "makerB") {
-    const clients = (this.clients ??= makeClients());
+    const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
     const account = accountFor(this.env, QUOTER[role], schedule);
     if (!account) return null;
-    this.signer ??= new Signer(account, [clients[0], clients[1]]);
+    // Sends go to the private node first, then the public ones. Without a private node, maker A sends
+    // through the primary public node and maker B through Conduit, so neither carries both. Either way a
+    // refused send moves that maker on to the next node and it stays there.
+    this.signer ??= new Signer(account, sendOrder(clients, role === "makerA" ? 0 : 1));
     return {
       vault: role === "makerA" ? schedule.vaults.a : schedule.vaults.b,
       settings: schedule.maker[MAKER_KEY[role]],
       referenceCoin: schedule.referenceCoin,
       signer: this.signer,
-      client: clients[0],
+      client: clients[0] as PublicClient,
       state: this.maker,
-      log: this.log,
+      log: withFields(this.log, { bot: role }),
     };
   }
 
@@ -151,9 +161,9 @@ export class Role {
       if (cfg.role === "keeper") {
         const account = accountFor(this.env, "keeper", schedule);
         if (!account) return this.finish("KEEPER_KEY is not set");
-        const clients = (this.clients ??= makeClients());
-        this.signer ??= new Signer(account, [clients[0], clients[1]]);
-        await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: this.log });
+        const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
+        this.signer ??= new Signer(account, clients);
+        await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: withFields(this.log, { bot: "keeper" }) });
         if (this.keeper.failed >= MAX_KEEPER_FAILURES) return this.finish("too many failures");
         next = Date.now() + 100;
       } else {

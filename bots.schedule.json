@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "windows": [{ "startUtc": "13:00", "minutes": 240 }],
   "dailyHypeCap": 0.13,
   "floorHype": {

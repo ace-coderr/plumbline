@@ -1,12 +1,12 @@
 import type { PublicClient } from "viem";
 import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbline/shared";
 import { schedule } from "./config.js";
-import { makeClients, readBalances } from "./chain.js";
+import { makeClients, readBalances, tryEach } from "./chain.js";
 import { ensureCampaign } from "./campaign.js";
-import { accountFor, secretValues, type Env } from "./env.js";
+import { redactorFor, type Env } from "./env.js";
 import { decide, toWei, type Balances, type DayStart, type Halt } from "./core/budget.js";
-import { makeRedactor } from "./core/redact.js";
-import { errText, makeLogger, type Logger } from "./core/log.js";
+import { errText, makeLogger, setRedactor, type Logger, safeJson } from "./core/log.js";
+import { accountFor } from "./env.js";
 import type { RoleName } from "./role.js";
 
 const ROLES: RoleName[] = ["keeper", "makerA", "makerB"];
@@ -26,7 +26,7 @@ const parse = (s: Record<string, string>): Balances => Object.fromEntries(RUNNER
  */
 export class Supervisor {
   private log: Logger;
-  private clients: [PublicClient, PublicClient] | null = null;
+  private clients: PublicClient[] | null = null;
   /** True while a tick is running: a second tick (cron and alarm can coincide) is skipped, never run alongside. */
   private busy = false;
 
@@ -34,7 +34,9 @@ export class Supervisor {
     private readonly state: DurableObjectState,
     private readonly env: Env,
   ) {
-    this.log = makeLogger(makeRedactor(secretValues(env)));
+    const redact = redactorFor(env);
+    setRedactor(redact);
+    this.log = makeLogger(redact);
   }
 
   private get<T>(k: string): Promise<T | undefined> {
@@ -67,7 +69,7 @@ export class Supervisor {
         const w = windowAt(schedule, nowSec);
         // A halt only counts while it applies: a cap halt for its UTC day, any other for its window.
         const halted = halt !== undefined && w !== null && (halt.kind === "cap" ? halt.day === utcDay(nowSec) : halt.windowStart === w.start);
-        return Response.json({ run: !killed && !halted && schedule.enabled && w !== null && current === runId });
+        return safeJson({ run: !killed && !halted && schedule.enabled && w !== null && current === runId });
       }
       default:
         return this.report();
@@ -93,7 +95,7 @@ export class Supervisor {
         }
       }),
     );
-    return Response.json({
+    return safeJson({
       enabled: schedule.enabled,
       killed: (await this.get<boolean>("killed")) ?? false,
       halt: (await this.get<Halt>("halt")) ?? null,
@@ -145,11 +147,10 @@ export class Supervisor {
       return;
     }
 
-    this.clients ??= makeClients();
-    const [client, sendClient] = this.clients;
+    const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
     let balances: Balances | null = null;
     try {
-      balances = await readBalances(client, schedule);
+      balances = await tryEach(clients, (c) => readBalances(c, schedule));
     } catch (err) {
       this.log.warn("balances not readable", { err: errText(err) });
     }
@@ -212,7 +213,7 @@ export class Supervisor {
     const lastCheck = (await this.get<number>("campaignCheckedAt")) ?? 0;
     if (runId !== window.start || Date.now() - lastCheck > CAMPAIGN_CHECK_MS) {
       await this.state.storage.put("campaignCheckedAt", Date.now());
-      const out = await ensureCampaign(this.env, schedule, client, sendClient, now, window.end, this.log);
+      const out = await ensureCampaign(this.env, schedule, clients, now, window.end, this.log);
       if (!out.ok && out.transient) {
         // A node that would not answer is not a reason to stop: look again next time, and stop after three in a row.
         const misses = ((await this.get<number>("campaignReadMisses")) ?? 0) + 1;

@@ -37,9 +37,12 @@ function fakeEnv() {
 }
 
 const realFetch = globalThis.fetch;
+const realNow = Date.now;
 let networkCalls = 0;
 beforeEach(() => {
   networkCalls = 0;
+  // 03:00 UTC: outside the shipped 13:00 window, whatever time the tests really run.
+  Date.now = () => Date.parse("2026-10-27T03:00:00Z");
   globalThis.fetch = (() => {
     networkCalls += 1;
     throw new Error("the supervisor touched the network");
@@ -47,11 +50,12 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
+  Date.now = realNow;
 });
 
-describe("supervisor as shipped (schedule off)", () => {
-  it("ships with the schedule off", () => {
-    assert.equal(schedule.enabled, false);
+describe("supervisor as shipped, outside its window", () => {
+  it("has one window and it is not 03:00 UTC", () => {
+    assert.equal(schedule.windows.length, 1);
   });
 
   it("a tick makes no network call and starts nothing", async () => {
@@ -63,7 +67,7 @@ describe("supervisor as shipped (schedule off)", () => {
     assert.equal(calls.filter((c) => c.includes("/start")).length, 0);
     assert.equal(st.map.get("rolesRunning"), undefined);
     assert.equal(await st.storage.getAlarm(), null, "no alarm is kept when there is nothing to do");
-    assert.deepEqual(st.map.get("lastDecision"), { action: "idle", reason: "the schedule is switched off" });
+    assert.deepEqual(st.map.get("lastDecision"), { action: "idle", reason: "outside the scheduled windows" });
   });
 
   it("the kill switch stops every role, persists, and answers should-run with no", async () => {
@@ -87,7 +91,7 @@ describe("supervisor as shipped (schedule off)", () => {
     const { env } = fakeEnv();
     const body = JSON.stringify(await (await new Supervisor(st as never, env).fetch(new Request("https://supervisor/state"))).json());
     assert.ok(!body.includes("\"t\""), "no admin token in the report");
-    assert.match(body, /"enabled":false/);
+    assert.match(body, /"enabled":true/);
   });
 });
 

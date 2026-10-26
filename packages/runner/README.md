@@ -1,8 +1,8 @@
 # Plumbline runner (Cloudflare Workers)
 
 Runs the keeper and the two maker bots on a schedule, on a free Cloudflare account, with nothing on your own
-machine. It is built and tested, **not deployed, and switched off**: `bots.schedule.json` ships with
-`"enabled": false`, and the Worker does nothing while that is so.
+machine. It is deployed and **switched on** for one 4-hour window a day (13:00 UTC, 14:00 Lagos) with a daily spend cap of
+0.13 HYPE (`bots.schedule.json`). Set `"enabled": false` and deploy to stop it.
 
 Why Cloudflare, with the measured numbers and the terms it was checked against: [`hosting-spike/README.md`](../../hosting-spike/README.md).
 
@@ -46,6 +46,7 @@ or from this folder `npx wrangler secret put NAME` (it asks for the value with h
 | `MAKER_A_KEY` | maker A (owns vault A) | `MAKER_A_PRIVATE_KEY` | `0xE071…72eF` | ~0.0001 | 1 bond, from the sponsor |
 | `MAKER_B_KEY` | maker B (owns vault B) | `MAKER_B_PRIVATE_KEY` | `0xA12c…32C3` | ~0.0001 | 1 bond, from the sponsor |
 | `SPONSOR_KEY` | **new wallet** | make one (below) | set `wallets.sponsor` | ~0.001 | ~44 (42 pot + 2 bonds) |
+| `CONDUIT_RPC_URL` | – | a private Conduit node URL, **its API key is in the path**; create it at app.conduit.xyz/nodes | – | – | – |
 | `ADMIN_TOKEN` | – | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` | – | – | – |
 
 \* At the default schedule, one 4-hour window a day at one quote a second per maker (about 40,000 gas, 0.000004 HYPE, each).
@@ -90,11 +91,18 @@ domain, zone or route.
 * Quotes go stale after 2 s on-chain; the makers refresh every 1 s. A host that stalls for a second or two lapses a quote.
 * The public `/health` is cached, but the free request quota is shared with the bots: someone hammering the URL can still use up
   Worker requests (cron triggers would fail while the Durable Object alarms keep running).
-* **Supervised test, 2026-10-26 (20-minute window): not clean.** The campaign opened (v2 #3, both vaults bonded), quotes and
-  probes landed (7 of 8 probes), the kill switch worked (a wrong token gets 401; the right one stops all three bots and `/resume`
-  restarts them), and the cap held (about 0.0016 HYPE spent). But **about half of the makers' `setQuote` sends failed with the
-  RPC's "Rate Limit Exceeded"**, from both public nodes (the primary is also a Conduit endpoint). Cloudflare's shared outbound
-  addresses get a small per-IP allowance, so the 3-poller keeper plus two makers is too much for them. Until the runner has an
-  RPC with its own limit (a Conduit API node URL, from app.conduit.xyz/nodes, set as a secret) the schedule should stay off.
-  The failures cost no gas, and the runner's responses held: makers back off 15 s after ten failures and end after six, the
-  supervisor skips a campaign check that cannot read and halts after three in a row.
+* **RPC.** The public nodes are rate-limited per address and Cloudflare's addresses are shared, so the runner uses a private Conduit
+  node (`CONDUIT_RPC_URL`) first and the two public nodes only as fallback. Its URL carries the API key in the path: it is never
+  logged, stored or returned. Every log line, every `errText`, every response body and the `/health` JSON go through the redactor, which
+  also knows the URL's path, query, segments and encoded forms (`test/conduit-leak.test.ts`: thrown viem errors, the real transport
+  failing and rate-limited, a refused send, the supervisor report, `/health` and a rejected admin call, for three URL shapes; it fails
+  if any scrubbing is removed).
+* **Supervised tests, 2026-10-26, 20-minute windows.** On the public nodes alone, about half of the makers' sends were rejected
+  ("Rate Limit Exceeded"), even split across both nodes (maker A 53%, maker B 19%). With the private node: **maker A 0 rejected of about
+  1,000 sends, maker B 1 rejected of about 1,000, keeper polls 0 failed of about 3,000**; 65 probes sent, 50 of 55 checked landed
+  (the rest were gate-closed races). Campaigns opened and re-opened by the sponsor as they neared their end, and the daily cap
+  stopped everything cleanly. The kill switch was tested (wrong token 401; right token stops all three bots; `/resume` restarts them).
+* **What it costs.** Measured at one quote a second per maker: about 0.014 HYPE an hour per quoter and 0.004 for the keeper, so a full
+  4-hour window is about 0.13 HYPE, which is the cap. Fund about 0.13 HYPE a day.
+* A full 4-hour day has not been run yet.
+

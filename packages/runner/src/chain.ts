@@ -15,10 +15,28 @@ import type { Balances } from "./core/budget.js";
 /** The two public nodes, each asked once per call: failure is reported, never retried in a loop. */
 export const RPC_URLS = [ELYSIUM_TESTNET.rpcUrl, "https://rpc-elysium-testnet.t.conduit.xyz"] as const;
 
-export function makeClients(): [PublicClient, PublicClient] {
+/**
+ * The nodes, best first: the private Conduit URL (when its secret is set), then the two public ones.
+ * The private URL exists only inside this function and the transport it builds; an error that prints it
+ * is scrubbed by `errText` before it is logged, stored or returned.
+ */
+export function makeClients(privateUrl?: string): PublicClient[] {
   const mk = (url: string): PublicClient =>
     createPublicClient({ chain: elysiumTestnet, transport: http(url, { timeout: 4_000, retryCount: 0 }), batch: { multicall: false } });
-  return [mk(RPC_URLS[0]), mk(RPC_URLS[1])];
+  return [...(privateUrl ? [mk(privateUrl)] : []), mk(RPC_URLS[0]), mk(RPC_URLS[1])];
+}
+
+/** Ask each node in turn until one answers; throws the last error if none does. */
+export async function tryEach<T>(clients: PublicClient[], fn: (c: PublicClient) => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (const c of clients) {
+    try {
+      return await fn(c);
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
 }
 
 const balanceAbi = parseAbi(["function getEthBalance(address) view returns (uint256)"]);

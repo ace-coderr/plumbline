@@ -1,6 +1,7 @@
 import { nextWindow, windowAt } from "@plumbline/shared";
 import { schedule } from "./config.js";
-import type { Env } from "./env.js";
+import { redactorFor, type Env } from "./env.js";
+import { safeJson, setRedactor } from "./core/log.js";
 import { Role } from "./role.js";
 import { Supervisor } from "./supervisor.js";
 
@@ -15,10 +16,13 @@ function sameSecret(a: string, b: string): boolean {
   return d === 0;
 }
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
+const json = (body: unknown, status = 200) => safeJson(body, { status, headers: { "cache-control": "no-store" } });
 
 /** Workers' edge cache; the DOM typings do not know about `default`. */
-const edgeCache = (caches as unknown as { default: { match(r: Request): Promise<Response | undefined>; put(r: Request, s: Response): Promise<void> } }).default;
+const edgeCache =
+  typeof caches === "undefined"
+    ? null
+    : (caches as unknown as { default: { match(r: Request): Promise<Response | undefined>; put(r: Request, s: Response): Promise<void> } }).default;
 
 const supervisor = (env: Env) => env.SUPERVISOR.get(env.SUPERVISOR.idFromName("main"));
 
@@ -29,20 +33,21 @@ export default {
    * Nothing else is routed: the roles and the supervisor cannot be reached from outside.
    */
   async fetch(req: Request, env: Env): Promise<Response> {
+    setRedactor(redactorFor(env));
     const url = new URL(req.url);
     if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/")) {
       // Cached for 15 s at the edge: the free daily request quota is shared with the bots, so a flood of
       // GETs must not reach the Durable Objects.
       const key = new Request(`${url.origin}/health`);
-      const hit = await edgeCache.match(key);
+      const hit = edgeCache ? await edgeCache.match(key) : undefined;
       if (hit) return hit;
       const now = Math.floor(Date.now() / 1000);
       const state = (await (await supervisor(env).fetch("https://supervisor/state")).json()) as object;
-      const res = Response.json(
+      const res = safeJson(
         { ...state, scheduleEnabled: schedule.enabled, windows: schedule.windows, inWindow: windowAt(schedule, now) !== null, next: nextWindow(schedule, now) },
         { headers: { "cache-control": "public, max-age=15" } },
       );
-      await edgeCache.put(key, res.clone());
+      if (edgeCache) await edgeCache.put(key, res.clone());
       return res;
     }
     if (req.method === "POST" && ["/kill", "/resume", "/tick"].includes(url.pathname)) {
@@ -56,6 +61,7 @@ export default {
 
   /** The cron trigger: wakes the supervisor once a minute. Whether anything runs is decided there. */
   async scheduled(_c: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    setRedactor(redactorFor(env));
     ctx.waitUntil(supervisor(env).fetch("https://supervisor/tick", { method: "POST" }).then(() => undefined));
   },
 };

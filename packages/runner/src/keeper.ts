@@ -1,7 +1,7 @@
 import { encodeFunctionData, type Hash, type PublicClient } from "viem";
 import { plumbCampaignsAbi } from "@plumbline/shared";
 import { CAMPAIGNS } from "./config.js";
-import type { Signer } from "./chain.js";
+import { tryEach, type Signer } from "./chain.js";
 import { shortHash } from "./core/redact.js";
 import { errText, type Logger } from "./core/log.js";
 import { pollable, settleDue, type Track } from "./core/keeper.js";
@@ -19,8 +19,10 @@ export interface KeeperState {
   settleCheckedAt: number;
   quietUntil: Record<number, number>;
   /** A node that just refused us (rate limit) is left alone until this time, ms. */
-  coolUntil: [number, number];
+  coolUntil: number[];
   pending: { hash: Hash; id: number; at: number }[];
+  pollsOk: number;
+  pollsFailed: number;
   probesSent: number;
   probesLanded: number;
   probesReverted: number;
@@ -36,8 +38,10 @@ export const newKeeperState = (): KeeperState => ({
   refreshedAt: 0,
   settleCheckedAt: 0,
   quietUntil: {},
-  coolUntil: [0, 0],
+  coolUntil: [0, 0, 0],
   pending: [],
+  pollsOk: 0,
+  pollsFailed: 0,
   probesSent: 0,
   probesLanded: 0,
   probesReverted: 0,
@@ -49,18 +53,19 @@ export const newKeeperState = (): KeeperState => ({
 
 export interface KeeperCtx {
   signer: Signer;
-  clients: [PublicClient, PublicClient];
+  clients: PublicClient[];
   state: KeeperState;
   log: Logger;
 }
 
 const BURST_MS = 3_500;
-const SUBREQUEST_BUDGET = 38;
+/** Between gate polls on each node: about 3 a second each, 6 in all. */
+const POLL_EVERY_MS = 300;
+const SUBREQUEST_BUDGET = 30;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function refresh(c: KeeperCtx, nowMs: number): Promise<number> {
-  const client = c.clients[0];
-  const count = Number(await client.readContract({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "campaignCount" }));
+  const count = Number(await tryEach(c.clients, (cl) => cl.readContract({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "campaignCount" })));
   // The most recent campaigns only: older ones are over.
   const ids = Array.from({ length: Math.min(count, 6) }, (_, i) => count - i);
   if (ids.length === 0) {
@@ -68,13 +73,16 @@ async function refresh(c: KeeperCtx, nowMs: number): Promise<number> {
     c.state.refreshedAt = nowMs;
     return 1;
   }
-  const reads = await client.multicall({
+  const reads = await tryEach(c.clients, (cl) =>
+    cl.multicall({
     allowFailure: false,
     contracts: ids.flatMap((id) => [
       { address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "terms", args: [BigInt(id)] } as const,
       { address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "state", args: [BigInt(id)] } as const,
     ]),
-  });
+    }),
+  );
+
   c.state.tracks = ids.map((id, i) => {
     const t = reads[2 * i] as { epochLength: bigint; minProbeInterval: number };
     const s = reads[2 * i + 1] as { startTime: bigint; numEpochs: number; settledEpochs: number; lastProbeAt: bigint };
@@ -102,7 +110,7 @@ async function settlePending(c: KeeperCtx): Promise<number> {
       continue;
     }
     used += 1;
-    const r = await c.clients[0].getTransactionReceipt({ hash: p.hash }).catch(() => null);
+    const r = await tryEach(c.clients, (cl) => cl.getTransactionReceipt({ hash: p.hash })).catch(() => null);
     if (!r) {
       if (Date.now() - p.at < 20_000) keep.push(p);
       continue;
@@ -142,22 +150,24 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
       }
     }
 
-    // Poll the gate until the burst ends, alternating nodes, three polls in flight, staggered.
-    let turn = 0;
+    // Poll the gate until the burst ends: one poll per node every POLL_EVERY_MS, both at once. A node that
+    // refused us is left alone for three seconds. (Three polls per 110 ms, as the local keeper does,
+    // is far over what a shared Cloudflare address is allowed.)
+    let rounds = 0;
     while (Date.now() - t0 < BURST_MS && used < SUBREQUEST_BUDGET) {
       const targets = pollable(st.tracks, nowSec(), st.quietUntil, Date.now());
       if (targets.length === 0) {
         await sleep(400);
         continue;
       }
-      const polls = [0, 1, 2].map(async (k) => {
-        await sleep(k * 110);
-        // The node to ask: alternate, but skip one that refused us in the last three seconds.
-        let idx = (turn + k) % 2;
-        if (Date.now() < (st.coolUntil[idx] ?? 0)) idx = 1 - idx;
+      const round = Date.now();
+      // With a private node (three clients) it is polled every round and the first public node every
+      // second round; otherwise both public nodes are polled every round.
+      rounds += 1;
+      const nodes = c.clients.length >= 3 ? (rounds % 2 === 0 ? [0, 1] : [0]) : [0, 1];
+      const polls = nodes.map(async (idx) => {
         if (Date.now() < (st.coolUntil[idx] ?? 0)) return [] as Track[];
-        const client = c.clients[idx] as PublicClient;
-        const open = await client
+        const open = await (c.clients[idx] as PublicClient)
           .multicall({
             allowFailure: true,
             contracts: targets.map((t) => ({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "probeGateOpen", args: [BigInt(t.id)] }) as const),
@@ -167,11 +177,15 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
             return null;
           });
         used += 1;
+        if (open) st.pollsOk += 1;
+        else st.pollsFailed += 1;
         return open ? targets.filter((_, i) => open[i]?.status === "success" && open[i]?.result === true) : [];
       });
-      turn += 3;
       const results = await Promise.all(polls);
-      const opened = new Set(results.flat().map((t) => t.id));
+      const wait = POLL_EVERY_MS - (Date.now() - round);
+      const opened0 = results.flat();
+      if (opened0.length === 0 && wait > 0) await sleep(wait);
+      const opened = new Set(opened0.map((t) => t.id));
       for (const id of opened) {
         // Re-checked after the polls came back: another poll in this round may already have sent.
         if (Date.now() < (st.quietUntil[id] ?? 0)) continue;

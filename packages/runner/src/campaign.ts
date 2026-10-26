@@ -1,7 +1,7 @@
 import { decodeEventLog, encodeFunctionData, erc20Abi, parseUnits, zeroAddress, type Address, type PublicClient } from "viem";
 import { plumbCampaignsAbi, plumbQuoteAbi, type BotsSchedule } from "@plumbline/shared";
 import { CAMPAIGNS, PLUMBUSD, WHYPE } from "./config.js";
-import { Signer } from "./chain.js";
+import { Signer, tryEach } from "./chain.js";
 import { accountFor, type Env } from "./env.js";
 import { funding, plan, type CampaignLite, type Plan } from "./core/campaign.js";
 import { errText, type Logger } from "./core/log.js";
@@ -42,15 +42,15 @@ const tokens = { base: WHYPE.address, quote: PLUMBUSD.address, reward: PLUMBUSD.
 export async function ensureCampaign(
   env: Env,
   schedule: BotsSchedule,
-  client: PublicClient,
-  sendClient: PublicClient,
+  clients: PublicClient[],
   nowSec: number,
   windowEnd: number,
   log: Logger,
 ): Promise<Outcome> {
   let p: Plan;
   try {
-    p = plan(await readCampaigns(client, schedule), schedule, nowSec, windowEnd, tokens);
+    const list = await tryEach(clients, (c) => readCampaigns(c, schedule));
+    p = plan(list, schedule, nowSec, windowEnd, tokens);
   } catch (err) {
     return { ok: false, reason: `could not read the campaigns: ${errText(err)}`, transient: true };
   }
@@ -64,8 +64,8 @@ export async function ensureCampaign(
     const mb = accountFor(env, "makerB", schedule);
     if (!sp) return { ok: false, reason: "the sponsor wallet is not set up (SPONSOR_KEY)" };
     if (!ma || !mb) return { ok: false, reason: "the maker owner wallets are not set up (MAKER_A_KEY, MAKER_B_KEY)" };
-    sponsor = new Signer(sp, [sendClient, client]);
-    makers = { a: new Signer(ma, [sendClient, client]), b: new Signer(mb, [sendClient, client]) };
+    sponsor = new Signer(sp, clients);
+    makers = { a: new Signer(ma, clients), b: new Signer(mb, clients) };
   } catch (err) {
     return { ok: false, reason: errText(err) };
   }
@@ -73,17 +73,26 @@ export async function ensureCampaign(
   // Funding first, so a shortage is reported before anything is sent.
   const need = funding(schedule, p);
   const bond = parseUnits(String(schedule.campaign.bondPlumbusd), PLUMBUSD.decimals);
-  const bal = async (a: Address) => client.readContract({ address: PLUMBUSD.address, abi: erc20Abi, functionName: "balanceOf", args: [a] });
-  const owners = await Promise.all([
-    client.readContract({ address: schedule.vaults.a, abi: plumbQuoteAbi, functionName: "owner" }),
-    client.readContract({ address: schedule.vaults.b, abi: plumbQuoteAbi, functionName: "owner" }),
-  ]).catch(() => null);
-  if (!owners) return { ok: false, reason: "could not read the vault owners" };
+  const bal = async (a: Address) => tryEach(clients, (c) => c.readContract({ address: PLUMBUSD.address, abi: erc20Abi, functionName: "balanceOf", args: [a] }));
+  const ownersOf = (c: PublicClient) =>
+    Promise.all([
+      c.readContract({ address: schedule.vaults.a, abi: plumbQuoteAbi, functionName: "owner" }),
+      c.readContract({ address: schedule.vaults.b, abi: plumbQuoteAbi, functionName: "owner" }),
+    ]);
+  // Asked of one node, then the other: a refused read is not a reason to stop.
+  const owners = await tryEach(clients, ownersOf).catch(() => null);
+  if (!owners) return { ok: false, reason: "could not read the vault owners", transient: true };
   if (owners[0].toLowerCase() !== makers.a.address.toLowerCase() || owners[1].toLowerCase() !== makers.b.address.toLowerCase()) {
     return { ok: false, reason: "MAKER_A_KEY / MAKER_B_KEY are not the owners of the vaults in bots.schedule.json" };
   }
   const bonding = p.kind === "open" ? (["a", "b"] as const) : p.vaults;
-  const [sponsorBal, aBal, bBal] = await Promise.all([bal(sponsor.address), bal(makers.a.address), bal(makers.b.address)]);
+  let balances: [bigint, bigint, bigint];
+  try {
+    balances = await Promise.all([bal(sponsor.address), bal(makers.a.address), bal(makers.b.address)]);
+  } catch (err) {
+    return { ok: false, reason: `could not read the PLUMBUSD balances: ${errText(err)}`, transient: true };
+  }
+  const [sponsorBal, aBal, bBal] = balances;
   const makerBal = { a: aBal, b: bBal };
   let topUps = 0n;
   for (const k of bonding) if (makerBal[k] < bond) topUps += bond - makerBal[k];

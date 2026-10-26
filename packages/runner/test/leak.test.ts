@@ -17,6 +17,7 @@ const fakeEnv = (): Env =>
     MAKER_A_KEY: `0x${hex()}`,
     MAKER_B_KEY: `0x${hex()}`.toUpperCase().replace("0X", "0x"),
     ADMIN_TOKEN: `admin-${hex(12)}`,
+    CONDUIT_RPC_URL: `https://rpc.conduit.xyz/v1/${hex(20)}`,
   }) as unknown as Env;
 
 function capture(env: Env) {
@@ -74,7 +75,8 @@ describe("log redaction", () => {
       const env = fakeEnv();
       const { lines, log } = capture(env);
       for (const n of SECRET_NAMES) {
-        const v = env[n as keyof Env] as string;
+        const v = env[n as keyof Env] as string | undefined;
+        if (!v) continue;
         log.info(`a ${v} b`, { x: v, y: v.toLowerCase(), z: [v.toUpperCase()] });
       }
       for (const l of lines) assertClean(env, l);
