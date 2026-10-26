@@ -9,11 +9,12 @@ export function Mark({ size = 22 }: { size?: number }) {
   );
 }
 
-export function Wordmark({ size = 22 }: { size?: number }) {
+/** `compact` drops the word on very narrow screens so the header bar still fits a wallet button. */
+export function Wordmark({ size = 22, compact = false }: { size?: number; compact?: boolean }) {
   return (
     <span className="inline-flex select-none items-center gap-2">
       <Mark size={size} />
-      <span className="font-display font-extrabold tracking-display text-ink" style={{ fontSize: size * 0.95 }}>
+      <span className={`font-display font-extrabold tracking-display text-ink${compact ? " max-[374px]:hidden" : ""}`} style={{ fontSize: size * 0.95 }}>
         plumbline
       </span>
     </span>

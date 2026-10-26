@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { NavLink, Outlet, Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Outlet, Link, useLocation } from "react-router-dom";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { REPO_URL, addressUrl, deployment, elysiumTestnet } from "@plumbline/shared";
 import { STATIC, useCampaigns, useHealth, useKeeper, useMarkets } from "../lib/api";
@@ -9,20 +9,8 @@ import { campaignSources, liveCounts } from "@plumbline/shared";
 import { useLive } from "../lib/liveStore";
 import { Wordmark } from "./Brand";
 import { ThemeToggle } from "./ThemeToggle";
-import { Button, Dot, cx } from "./ui";
-
-const NAV = [
-  { to: "/", label: "Markets", end: true },
-  { to: "/campaigns", label: "Campaigns", end: false },
-  { to: "/maker", label: "Maker", end: false },
-  { to: "/economics", label: "Economics", end: false },
-  { to: "/scorecard", label: "Scorecard", end: false },
-  { to: "/verify", label: "Verify", end: false },
-  { to: "/try", label: "Try it", end: false },
-  { to: "/faucet", label: "Faucet", end: false },
-  { to: "/status", label: "Status", end: false },
-  { to: "/how-it-works", label: "How it works", end: false },
-] as const;
+import { Button, Dot } from "./ui";
+import { DesktopNav, MobileMenuButton, MobilePanel, SiteFooterLinks } from "./Nav";
 
 /** Why connecting did not work, and what to do about it. */
 function WalletHelp({ message, onClose }: { message: string; onClose: () => void }) {
@@ -85,14 +73,15 @@ export function WalletButton() {
   if (chainId !== elysiumTestnet.id) {
     return (
       <Button variant="danger" className="h-9 px-3 text-xs" onClick={() => switchChain({ chainId: elysiumTestnet.id })}>
-        Switch to Elysium
+        <span className="sm:hidden">Switch</span>
+        <span className="hidden sm:inline">Switch to Elysium</span>
       </Button>
     );
   }
   return (
-    <Button className="h-9 px-3 text-xs" onClick={() => disconnect()} title="Disconnect">
+    <Button className="h-9 max-w-[10rem] px-2.5 text-xs sm:px-3" onClick={() => disconnect()} title={`Disconnect ${address ?? ""}`}>
       <Dot tone="pass" />
-      <span className="num">{short(address)}</span>
+      <span className="num truncate">{short(address, 3)}</span>
     </Button>
   );
 }
@@ -193,35 +182,25 @@ export function TestnetNote({ className = "" }: { className?: string }) {
 }
 
 export function Layout() {
+  const { pathname } = useLocation();
+  const [menu, setMenu] = useState(false);
+  // The mobile panel closes on navigation.
+  useEffect(() => setMenu(false), [pathname]);
   return (
     <div className="min-h-screen pb-14">
       <header className="no-print sticky top-0 z-20 border-b-2 border-ink bg-bg">
-        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5">
-          <Link to="/" aria-label="Plumbline home">
-            <Wordmark size={22} />
+        <div className="mx-auto flex max-w-[1400px] items-center gap-x-3 px-4 py-2.5 lg:gap-x-6">
+          <Link to="/" aria-label="Plumbline home" className="shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
+            <Wordmark size={22} compact />
           </Link>
-          <div className="ml-auto flex items-center gap-2 sm:order-last">
+          <DesktopNav />
+          <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
             <ThemeToggle />
             <WalletButton />
+            <MobileMenuButton open={menu} onToggle={() => setMenu((m) => !m)} />
           </div>
-          <nav className="-mx-1 flex w-full gap-1 overflow-x-auto sm:mx-0 sm:w-auto">
-            {NAV.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                end={n.end}
-                className={({ isActive }) =>
-                  cx(
-                    "shrink-0 rounded-[8px] border-2 px-3 py-1 text-sm font-semibold",
-                    isActive ? "border-ink bg-violet text-on-violet" : "border-transparent text-ink hover:border-ink",
-                  )
-                }
-              >
-                {n.label}
-              </NavLink>
-            ))}
-          </nav>
         </div>
+        {menu && <MobilePanel onClose={() => setMenu(false)} />}
       </header>
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:py-8">
         {STATIC && (
@@ -230,7 +209,8 @@ export function Layout() {
           </div>
         )}
         <Outlet />
-        <TestnetNote className="no-print mt-10 max-w-3xl border-t-2 border-ink pt-4" />
+        <SiteFooterLinks />
+        <TestnetNote className="no-print mt-6 max-w-3xl" />
       </main>
       <StatusBar />
     </div>
