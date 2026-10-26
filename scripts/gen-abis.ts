@@ -10,7 +10,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(root, "packages/shared/src/abis");
 mkdirSync(outDir, { recursive: true });
 
-const contracts = ["PlumbQuote", "PlumbQuoteFactory", "PlumbRouter", "PlumbCampaigns"] as const;
+const contracts = ["PlumbQuote", "PlumbQuoteFactory", "PlumbRouter", "PlumbCampaigns", "PlumbFaucet"] as const;
 
 interface ForgeArtifact {
   abi: unknown[];

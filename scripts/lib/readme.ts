@@ -38,6 +38,7 @@ export function updateReadme(d: DeploymentRecord): void {
     ...(seed.vaultA ? [["PlumbQuote · maker A, WHYPE/PLUMBUSD (12 bps)", seed.vaultA]] : []),
     ...(seed.vaultB ? [["PlumbQuote · maker B, WHYPE/PLUMBUSD (24 bps)", seed.vaultB]] : []),
     ...(seed.canonicalVault ? [["PlumbQuote · WHYPE/USDC market (registered, unseeded)", seed.canonicalVault]] : []),
+    ...(d.faucet ? [["PlumbFaucet (**demo**: hands out PLUMBUSD, 100 per address per day)", d.faucet.address]] : []),
   ];
   const tokens = [
     ...Object.values(d.tokens).map((t) => [`${t.symbol} (canonical, ${t.decimals} decimals)`, t.address]),

@@ -3,4 +3,5 @@ export { plumbQuoteAbi } from "./PlumbQuote.js";
 export { plumbQuoteFactoryAbi } from "./PlumbQuoteFactory.js";
 export { plumbRouterAbi } from "./PlumbRouter.js";
 export { plumbCampaignsAbi } from "./PlumbCampaigns.js";
+export { plumbFaucetAbi } from "./PlumbFaucet.js";
 export { wrappedNativeAbi } from "./wrappedNative.js";

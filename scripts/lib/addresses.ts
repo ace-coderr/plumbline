@@ -13,6 +13,18 @@ export interface TokenInfo {
   decimals: number;
 }
 
+/** The PLUMBUSD faucet (contracts/src/test/PlumbFaucet.sol). Demo only. */
+export interface FaucetInfo {
+  address: `0x${string}`;
+  token: `0x${string}`;
+  /** Raw token units per claim, as a decimal string. */
+  amount: string;
+  /** Seconds between claims for one address. */
+  cooldown: number;
+  deployBlock: number;
+  deployedAt: string;
+}
+
 export interface DeploymentRecord {
   chainId: number;
   deployed: boolean;
@@ -31,6 +43,8 @@ export interface DeploymentRecord {
    * canonical, always labelled "demo asset" in the UI.
    */
   demoTokens: Record<string, TokenInfo>;
+  /** Present once the faucet has been deployed. */
+  faucet?: FaucetInfo;
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
