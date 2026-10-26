@@ -1,12 +1,13 @@
 /**
  * Recompute a vault's scorecard figures straight from the chain: every `ProbeResult` and `Penalized`
- * event the campaigns contract emitted for the vault, read with chunked `getLogs`. Nothing here
+ * event the campaigns contracts (v1 and v2) emitted for the vault, read with chunked `getLogs`. Nothing here
  * touches the indexer, so /verify can check a report against the chain alone.
  */
 import { erc20Abi, type Hex, type PublicClient } from "viem";
 import { plumbCampaignsAbi } from "./abis/PlumbCampaigns.js";
 import { plumbQuoteAbi } from "./abis/PlumbQuote.js";
 import { deployment } from "./addresses.js";
+import { appIdOf, campaignSources } from "./campaignIds.js";
 import { computeFigures, type ScorecardFigures, type VaultProbeRow, type VaultSlash } from "./scorecard.js";
 import type { Address } from "./pairs.js";
 
@@ -104,6 +105,8 @@ export interface RecomputeOptions extends ScanOptions {
   asOfBlock: bigint;
   /** First block to read; defaults to the block the contracts were deployed at. */
   fromBlock?: bigint;
+  /** Campaigns contracts to read; defaults to every one the app knows (v1 and v2). */
+  campaigns?: Address[];
 }
 
 /**
@@ -113,7 +116,7 @@ export interface RecomputeOptions extends ScanOptions {
 export async function recomputeFromChain(client: PublicClient, opts: RecomputeOptions): Promise<ChainScorecard> {
   const { vault, asOfBlock } = opts;
   const from = opts.fromBlock ?? BigInt(deployment.deployBlock);
-  const campaigns = deployment.contracts.campaigns as Address;
+  const campaigns = opts.campaigns ?? campaignSources.map((s) => s.campaigns);
 
   const [owner, baseToken, quoteToken] = await Promise.all([
     client.readContract({ address: vault, abi: plumbQuoteAbi, functionName: "owner" }),
@@ -159,7 +162,7 @@ export async function recomputeFromChain(client: PublicClient, opts: RecomputeOp
   );
 
   const rows: VaultProbeRow[] = results.map((l) => ({
-    campaignId: Number(l.args.id),
+    campaignId: appIdOf(l.address, Number(l.args.id)) ?? Number(l.args.id),
     epoch: Number(l.args.epoch),
     nonce: Number(l.args.nonce),
     passed: l.args.passed,
@@ -171,7 +174,7 @@ export async function recomputeFromChain(client: PublicClient, opts: RecomputeOp
     askSize: l.args.askSize.toString(),
   }));
   const slashes: VaultSlash[] = penalties.map((l) => ({
-    campaignId: Number(l.args.id),
+    campaignId: appIdOf(l.address, Number(l.args.id)) ?? Number(l.args.id),
     txHash: l.transactionHash as Hex,
     slashed: l.args.slashed.toString(),
   }));

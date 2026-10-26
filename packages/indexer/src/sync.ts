@@ -1,5 +1,7 @@
 import { decodeEventLog, erc20Abi, getAddress, type Hex, type PublicClient } from "viem";
 import {
+  appIdOf,
+  campaignSources,
   deployment,
   pairSlug,
   plumbCampaignsAbi,
@@ -36,8 +38,9 @@ const lower = (a: string) => a.toLowerCase();
  */
 export class Syncer {
   private readonly factory = lower(deployment.contracts.factory);
-  private readonly campaigns = lower(deployment.contracts.campaigns);
-  private readonly router = lower(deployment.contracts.router);
+  /** Every campaigns contract (v1 legacy and v2) and router the app has deployed; events from all are indexed. */
+  private readonly campaignAddrs = new Set(campaignSources.map((s) => lower(s.campaigns)));
+  private readonly routerAddrs = new Set(campaignSources.map((s) => lower(s.router)));
   private range = 20_000;
   private readonly receiptQueue: { hash: Hex; kind: "probe" | "setQuote"; campaignId?: number; nonce?: number; ts: number }[] = [];
   private lastQuoteSample = new Map<string, number>();
@@ -68,7 +71,7 @@ export class Syncer {
 
     let logs: RawLog[];
     try {
-      logs = await this.fetchLogs([this.factory, this.campaigns, this.router, ...this.vaultAddresses()], from, to);
+      logs = await this.fetchLogs([this.factory, ...this.campaignAddrs, ...this.routerAddrs, ...this.vaultAddresses()], from, to);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/limit|range|too many|exceed/i.test(msg) && this.range > 50) {
@@ -131,7 +134,7 @@ export class Syncer {
       if (addr === this.factory) {
         const e = this.decodeFactory(l);
         if (e?.eventName === "PairListed") [base, quote] = [e.args.base, e.args.quote];
-      } else if (addr === this.campaigns) {
+      } else if (this.campaignAddrs.has(addr)) {
         const e = this.decodeCampaigns(l);
         if (e?.eventName === "CampaignOpened") [base, quote] = [e.args.base, e.args.quote];
       }
@@ -208,8 +211,8 @@ export class Syncer {
       logIndex: Number(BigInt(l.logIndex)),
     };
     if (addr === this.factory) return this.onFactory(l, ctx);
-    if (addr === this.campaigns) return this.onCampaigns(l, ctx);
-    if (addr === this.router) return this.onRouter(l, ctx);
+    if (this.campaignAddrs.has(addr)) return this.onCampaigns(l, ctx);
+    if (this.routerAddrs.has(addr)) return this.onRouter(l, ctx);
     return this.onVault(l, ctx);
   }
 
@@ -326,6 +329,11 @@ export class Syncer {
       );
   }
 
+  /** The app-wide campaign id for a campaign number in an event from this log's contract (see campaignIds). */
+  private cid(l: RawLog, local: bigint): number {
+    return appIdOf(l.address, Number(local)) ?? Number(local);
+  }
+
   private onCampaigns(l: RawLog, c: Ctx): void {
     const e = this.decodeCampaigns(l);
     if (!e) return;
@@ -341,7 +349,7 @@ export class Syncer {
              maker_bond, reference_price, opened_block, opened_ts, tx_hash)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
-          Number(e.args.id),
+          this.cid(l, e.args.id),
           market,
           lower(e.args.creator),
           lower(e.args.rewardToken),
@@ -366,29 +374,29 @@ export class Syncer {
         db.prepare(
           `INSERT INTO registrations (campaign_id, vault, maker, bond, status, registered_ts) VALUES (?, ?, ?, ?, 'active', ?)
            ON CONFLICT(campaign_id, vault) DO UPDATE SET maker = excluded.maker, bond = excluded.bond, status = 'active', registered_ts = excluded.registered_ts`,
-        ).run(Number(e.args.id), lower(e.args.vault), lower(e.args.maker), e.args.bond.toString(), c.ts);
+        ).run(this.cid(l, e.args.id), lower(e.args.vault), lower(e.args.maker), e.args.bond.toString(), c.ts);
         return;
       case "BondToppedUp":
         db.prepare("UPDATE registrations SET bond = ? WHERE campaign_id = ? AND vault = ?").run(
           e.args.bond.toString(),
-          Number(e.args.id),
+          this.cid(l, e.args.id),
           lower(e.args.vault),
         );
         return;
       case "UnbondRequested":
         db.prepare("UPDATE registrations SET status = 'unbonding' WHERE campaign_id = ? AND vault = ?").run(
-          Number(e.args.id),
+          this.cid(l, e.args.id),
           lower(e.args.vault),
         );
         return;
       case "BondReleased":
         db.prepare("UPDATE registrations SET status = 'released', bond = '0' WHERE campaign_id = ? AND vault = ?").run(
-          Number(e.args.id),
+          this.cid(l, e.args.id),
           lower(e.args.vault),
         );
         return;
       case "ProbeResult": {
-        const id = Number(e.args.id);
+        const id = this.cid(l, e.args.id);
         const epoch = Number(e.args.epoch);
         const vault = lower(e.args.vault);
         db.prepare(
@@ -419,7 +427,7 @@ export class Syncer {
         return;
       }
       case "Probed": {
-        const id = Number(e.args.id);
+        const id = this.cid(l, e.args.id);
         const epoch = Number(e.args.epoch);
         const nonce = Number(e.args.nonce);
         db.prepare(
@@ -446,7 +454,7 @@ export class Syncer {
         return;
       }
       case "Penalized": {
-        const id = Number(e.args.id);
+        const id = this.cid(l, e.args.id);
         const vault = lower(e.args.vault);
         db.prepare(
           `INSERT OR IGNORE INTO penalties (tx_hash, log_index, campaign_id, vault, reporter, slashed, to_reporter, to_makers, forfeited, ts)
@@ -491,7 +499,7 @@ export class Syncer {
         return;
       }
       case "EpochSettled": {
-        const id = Number(e.args.id);
+        const id = this.cid(l, e.args.id);
         const epoch = Number(e.args.epoch);
         db.prepare(
           `INSERT INTO epochs (campaign_id, epoch, probes, total_points, maker_pot, refunded, settled, settled_tx, settled_ts)
@@ -513,7 +521,7 @@ export class Syncer {
         return;
       }
       case "RewardCredited": {
-        const id = Number(e.args.id);
+        const id = this.cid(l, e.args.id);
         const epoch = Number(e.args.epoch);
         const vault = lower(e.args.vault);
         const prev = db

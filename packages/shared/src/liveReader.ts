@@ -16,9 +16,9 @@ import { plumbQuoteAbi } from "./abis/PlumbQuote.js";
 import { plumbQuoteFactoryAbi } from "./abis/PlumbQuoteFactory.js";
 import { deployment } from "./addresses.js";
 import { scanRange, type ScanOptions } from "./chainScorecard.js";
+import { appIdOf, campaignSources } from "./campaignIds.js";
 import { knownTokens, type Address } from "./pairs.js";
 
-const CAMPAIGNS = deployment.contracts.campaigns as Address;
 const FACTORY = deployment.contracts.factory as Address;
 
 // -------------------------------------------------------------------------------------------------
@@ -111,24 +111,27 @@ function ok<T>(r: { status: "success"; result: T } | { status: "failure"; error:
 
 export async function readChainViews(client: PublicClient): Promise<ChainViews> {
   // Round trips cost 0.5-1.5 s each on the public nodes, so independent reads go out together.
-  const [block, campaignCount, vaultCount] = await Promise.all([
+  const [block, counts, vaultCount] = await Promise.all([
     client.getBlock({ blockTag: "latest" }),
-    client.readContract({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "campaignCount" }),
+    Promise.all(campaignSources.map((s) => client.readContract({ address: s.campaigns, abi: plumbCampaignsAbi, functionName: "campaignCount" }))),
     client.readContract({ address: FACTORY, abi: plumbQuoteFactoryAbi, functionName: "vaultCount" }),
   ]);
   const head = num(block.number);
   const headTs = num(block.timestamp);
-  const nCampaigns = Math.min(num(campaignCount), MAX_CAMPAIGNS);
+  const campaignCount = counts.reduce((a, c) => a + num(c), 0);
+  const capped = counts.some((c) => num(c) > MAX_CAMPAIGNS);
   const nVaults = Math.min(num(vaultCount), MAX_VAULTS);
 
-  // Campaigns are numbered from 1.
-  const ids = Array.from({ length: nCampaigns }, (_, i) => i + 1);
+  // Each contract numbers its campaigns from 1; `idBase` makes the app id unique across contracts.
+  const refs = campaignSources.flatMap((s, si) =>
+    Array.from({ length: Math.min(num(counts[si] as bigint), MAX_CAMPAIGNS) }, (_, i) => ({ source: s, local: i + 1, id: s.idBase + i + 1 })),
+  );
   const [campaignReads, vaultAddrReads] = await Promise.all([
     client.multicall({
       allowFailure: true,
-      contracts: ids.flatMap((id) => [
-        { address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "terms", args: [BigInt(id)] } as const,
-        { address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "state", args: [BigInt(id)] } as const,
+      contracts: refs.flatMap((r) => [
+        { address: r.source.campaigns, abi: plumbCampaignsAbi, functionName: "terms", args: [BigInt(r.local)] } as const,
+        { address: r.source.campaigns, abi: plumbCampaignsAbi, functionName: "state", args: [BigInt(r.local)] } as const,
       ]),
     }),
     client.multicall({
@@ -136,7 +139,7 @@ export async function readChainViews(client: PublicClient): Promise<ChainViews> 
       contracts: Array.from({ length: nVaults }, (_, i) => ({ address: FACTORY, abi: plumbQuoteFactoryAbi, functionName: "vaultAt", args: [BigInt(i)] }) as const),
     }),
   ]);
-  const campaigns: ChainCampaign[] = ids.map((id, i) => {
+  const campaigns: ChainCampaign[] = refs.map(({ id }, i) => {
     const t = ok(campaignReads[i * 2] as never, `campaign ${id} terms`) as {
       base: Address; quote: Address; epochLength: bigint; rewardPerEpoch: bigint; maxSpreadBps: number;
       minDepthBase: bigint; minDepthQuote: bigint; minProbeInterval: number; probeFeeBps: number; makerBond: bigint;
@@ -243,12 +246,12 @@ export async function readChainViews(client: PublicClient): Promise<ChainViews> 
   return {
     head,
     headTs,
-    campaignCount: num(campaignCount),
+    campaignCount,
     campaigns,
     vaultCount: num(vaultCount),
     vaults,
     tokens,
-    capped: { campaigns: num(campaignCount) > MAX_CAMPAIGNS, vaults: num(vaultCount) > MAX_VAULTS },
+    capped: { campaigns: capped, vaults: num(vaultCount) > MAX_VAULTS },
   };
 }
 
@@ -297,13 +300,16 @@ function flatten(args: unknown): Record<string, string | number | boolean> {
 
 export const logKey = (l: Pick<LiveLog, "txHash" | "logIndex">) => `${l.txHash}:${l.logIndex}`;
 
-/** Every campaigns-contract event in [from, to], chunked, with a per-chunk split on failure. */
+/**
+ * Every event of every campaigns contract (v1 and v2) in [from, to], chunked, with a per-chunk split on
+ * failure. A campaign id in an event is rewritten to the app id, so v1 #1 and v2 #1 stay apart.
+ */
 export async function scanCampaignEvents(client: PublicClient, from: bigint, to: bigint, opts: ScanOptions = {}): Promise<LiveLog[]> {
   const raw = await scanRange(
     from,
     to,
     async (a, b) => {
-      const logs = await client.getLogs({ address: CAMPAIGNS, fromBlock: a, toBlock: b });
+      const logs = await client.getLogs({ address: campaignSources.map((s) => s.campaigns), fromBlock: a, toBlock: b });
       return parseEventLogs({ abi: plumbCampaignsAbi, logs, strict: false });
     },
     { chunk: 1_000_000n, minChunk: 2_000n, ...opts },
@@ -313,7 +319,13 @@ export async function scanCampaignEvents(client: PublicClient, from: bigint, to:
     const name = (l as { eventName?: string }).eventName;
     if (!name || !WANTED.has(name)) continue;
     if (l.blockNumber === null || l.logIndex === null || l.transactionHash === null) continue;
-    out.push({ name: name as LiveEventName, block: num(l.blockNumber), logIndex: l.logIndex, txHash: l.transactionHash, args: flatten((l as { args?: unknown }).args) });
+    const args = flatten((l as { args?: unknown }).args);
+    if (args.id !== undefined) {
+      const appId = appIdOf(l.address, Number(args.id));
+      if (appId === null) continue;
+      args.id = String(appId);
+    }
+    out.push({ name: name as LiveEventName, block: num(l.blockNumber), logIndex: l.logIndex, txHash: l.transactionHash, args });
   }
   return out;
 }
