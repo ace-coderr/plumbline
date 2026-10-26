@@ -14,7 +14,7 @@ import { errText, type Logger } from "./core/log.js";
  * Every step is attempted once. Anything that fails, or any shortage of PLUMBUSD or HYPE, comes back
  * as `{ ok: false, reason }` and the supervisor halts the run: there is no retry loop here.
  */
-export type Outcome = { ok: true; did: string } | { ok: false; reason: string };
+export type Outcome = { ok: true; did: string } | { ok: false; reason: string; transient?: boolean };
 
 async function readCampaigns(client: PublicClient, schedule: BotsSchedule): Promise<CampaignLite[]> {
   const count = Number(await client.readContract({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "campaignCount" }));
@@ -52,7 +52,7 @@ export async function ensureCampaign(
   try {
     p = plan(await readCampaigns(client, schedule), schedule, nowSec, windowEnd, tokens);
   } catch (err) {
-    return { ok: false, reason: `could not read the campaigns: ${errText(err)}` };
+    return { ok: false, reason: `could not read the campaigns: ${errText(err)}`, transient: true };
   }
   if (p.kind === "ok") return { ok: true, did: "" };
 
@@ -64,8 +64,8 @@ export async function ensureCampaign(
     const mb = accountFor(env, "makerB", schedule);
     if (!sp) return { ok: false, reason: "the sponsor wallet is not set up (SPONSOR_KEY)" };
     if (!ma || !mb) return { ok: false, reason: "the maker owner wallets are not set up (MAKER_A_KEY, MAKER_B_KEY)" };
-    sponsor = new Signer(sp, sendClient);
-    makers = { a: new Signer(ma, sendClient), b: new Signer(mb, sendClient) };
+    sponsor = new Signer(sp, [sendClient, client]);
+    makers = { a: new Signer(ma, [sendClient, client]), b: new Signer(mb, [sendClient, client]) };
   } catch (err) {
     return { ok: false, reason: errText(err) };
   }

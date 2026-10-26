@@ -48,10 +48,20 @@ export class Signer {
   private fee = 0n;
   private feeAt = 0;
 
+  /** Which node sends go to. It moves to the other one when a send fails, and stays there. */
+  private ix = 0;
+  private readonly clients: PublicClient[];
+
   constructor(
     readonly account: PrivateKeyAccount,
-    private readonly client: PublicClient,
-  ) {}
+    client: PublicClient | PublicClient[],
+  ) {
+    this.clients = Array.isArray(client) ? client : [client];
+  }
+
+  private get client(): PublicClient {
+    return this.clients[this.ix % this.clients.length] as PublicClient;
+  }
 
   get address(): Address {
     return this.account.address;
@@ -81,6 +91,7 @@ export class Signer {
       return hash;
     } catch (err) {
       this.nonce = null;
+      this.ix += 1;
       throw err;
     }
   }

@@ -18,6 +18,8 @@ export interface KeeperState {
   refreshedAt: number;
   settleCheckedAt: number;
   quietUntil: Record<number, number>;
+  /** A node that just refused us (rate limit) is left alone until this time, ms. */
+  coolUntil: [number, number];
   pending: { hash: Hash; id: number; at: number }[];
   probesSent: number;
   probesLanded: number;
@@ -34,6 +36,7 @@ export const newKeeperState = (): KeeperState => ({
   refreshedAt: 0,
   settleCheckedAt: 0,
   quietUntil: {},
+  coolUntil: [0, 0],
   pending: [],
   probesSent: 0,
   probesLanded: 0,
@@ -149,13 +152,20 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
       }
       const polls = [0, 1, 2].map(async (k) => {
         await sleep(k * 110);
-        const client = c.clients[(turn + k) % 2] as PublicClient;
+        // The node to ask: alternate, but skip one that refused us in the last three seconds.
+        let idx = (turn + k) % 2;
+        if (Date.now() < (st.coolUntil[idx] ?? 0)) idx = 1 - idx;
+        if (Date.now() < (st.coolUntil[idx] ?? 0)) return [] as Track[];
+        const client = c.clients[idx] as PublicClient;
         const open = await client
           .multicall({
             allowFailure: true,
             contracts: targets.map((t) => ({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "probeGateOpen", args: [BigInt(t.id)] }) as const),
           })
-          .catch(() => null);
+          .catch(() => {
+            st.coolUntil[idx] = Date.now() + 3_000;
+            return null;
+          });
         used += 1;
         return open ? targets.filter((_, i) => open[i]?.status === "success" && open[i]?.result === true) : [];
       });

@@ -213,8 +213,23 @@ export class Supervisor {
     if (runId !== window.start || Date.now() - lastCheck > CAMPAIGN_CHECK_MS) {
       await this.state.storage.put("campaignCheckedAt", Date.now());
       const out = await ensureCampaign(this.env, schedule, client, sendClient, now, window.end, this.log);
-      if (!out.ok) return this.halt({ kind: out.reason.includes("PLUMBUSD") && out.reason.includes("sponsor") ? "sponsor" : "campaign", reason: out.reason, day: utcDay(now), windowStart: window.start, at: now });
-      if (out.did) await this.state.storage.put("campaignNote", `${out.did} at ${new Date().toISOString()}`);
+      if (!out.ok && out.transient) {
+        // A node that would not answer is not a reason to stop: look again next time, and stop after three in a row.
+        const misses = ((await this.get<number>("campaignReadMisses")) ?? 0) + 1;
+        await this.state.storage.put("campaignReadMisses", misses);
+        await this.state.storage.put("campaignCheckedAt", 0);
+        if (misses < 3) {
+          this.log.warn("campaign check skipped", { reason: out.reason, misses });
+          if (runId !== window.start) return;
+        } else {
+          await this.state.storage.put("campaignReadMisses", 0);
+          return this.halt({ kind: "rpc", reason: out.reason, day: utcDay(now), windowStart: window.start, at: now });
+        }
+      } else if (out.ok) {
+        await this.state.storage.put("campaignReadMisses", 0);
+      }
+      if (!out.ok && !out.transient) return this.halt({ kind: out.reason.includes("PLUMBUSD") && out.reason.includes("sponsor") ? "sponsor" : "campaign", reason: out.reason, day: utcDay(now), windowStart: window.start, at: now });
+      if (out.ok && out.did) await this.state.storage.put("campaignNote", `${out.did} at ${new Date().toISOString()}`);
     }
     if (runId !== window.start) {
       await this.state.storage.put("runId", window.start);

@@ -30,5 +30,10 @@ export function makeLogger(redact: (s: string) => string, sink: (line: string) =
   };
 }
 
-/** First line of an error message, for a log field. */
-export const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split("\n")[0]?.slice(0, 200) ?? "error";
+/** First line of an error message, plus the node's own detail when there is one, for a log field. */
+export const errText = (e: unknown): string => {
+  const x = e as { shortMessage?: string; details?: string } | null;
+  const base = (x?.shortMessage ?? (e instanceof Error ? e.message : String(e))).split("\n")[0] ?? "error";
+  const detail = typeof x?.details === "string" && x.details && !base.includes(x.details) ? ` (${x.details.split("\n")[0]?.slice(0, 90)})` : "";
+  return `${base}${detail}`.slice(0, 220);
+};

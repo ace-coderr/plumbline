@@ -102,8 +102,11 @@ export async function cancelQuote(c: MakerCtx, reason: string): Promise<void> {
   }
 }
 
-/** Returns "stop" when the run should end because sends keep failing. */
-export async function makerTick(c: MakerCtx): Promise<"ok" | "stop"> {
+/**
+ * Returns "backoff" after ten failed sends in a row: the caller waits before the next tick instead of
+ * hammering a node that is refusing us, and ends the run if that keeps happening.
+ */
+export async function makerTick(c: MakerCtx): Promise<"ok" | "backoff"> {
   const s = c.state;
   s.ticks += 1;
   if (s.ticks === 1 || s.ticks % 2 === 0) await pollReference(c);
@@ -142,7 +145,10 @@ export async function makerTick(c: MakerCtx): Promise<"ok" | "stop"> {
     s.consecutiveFailures += 1;
     s.lastError = errText(err);
     c.log.warn("setQuote failed", { err: s.lastError, consecutive: s.consecutiveFailures });
-    if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return "stop";
+    if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      s.consecutiveFailures = 0;
+      return "backoff";
+    }
   }
   return "ok";
 }

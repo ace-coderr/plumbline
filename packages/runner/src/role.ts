@@ -25,7 +25,10 @@ const MAKER_KEY: Record<"makerA" | "makerB", "A" | "B"> = { makerA: "A", makerB:
 const CHECK_EVERY_MS = 30_000;
 /** A role stops if the supervisor has not answered for this long: it must not run unsupervised. */
 const SUPERVISOR_SILENCE_MS = 150_000;
-const MAX_KEEPER_FAILURES = 40;
+const MAX_KEEPER_FAILURES = 120;
+/** After ten failed sends in a row a maker waits this long, and the run ends after this many such waits. */
+const BACKOFF_MS = 15_000;
+const MAX_BACKOFFS = 6;
 
 /**
  * One bot as a Durable Object: an alarm loop. There are three, named keeper, makerA and makerB, so a
@@ -41,6 +44,7 @@ export class Role {
   private log: Logger;
   private lastCheck = 0;
   private lastOk = 0;
+  private backoffs = 0;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -65,6 +69,7 @@ export class Role {
       this.signer = null;
       this.lastCheck = Date.now();
       this.lastOk = Date.now();
+      this.backoffs = 0;
       await this.state.storage.put("cfg", { role: body.role, runId: body.runId, windowEnd: body.windowEnd, running: true, startedAt: Date.now() } satisfies RoleConfig);
       await this.state.storage.setAlarm(Date.now() + 50);
       this.log.info("role started", { role: body.role, runId: body.runId });
@@ -107,7 +112,7 @@ export class Role {
     const clients = (this.clients ??= makeClients());
     const account = accountFor(this.env, QUOTER[role], schedule);
     if (!account) return null;
-    this.signer ??= new Signer(account, clients[1]);
+    this.signer ??= new Signer(account, [clients[0], clients[1]]);
     return {
       vault: role === "makerA" ? schedule.vaults.a : schedule.vaults.b,
       settings: schedule.maker[MAKER_KEY[role]],
@@ -147,7 +152,7 @@ export class Role {
         const account = accountFor(this.env, "keeper", schedule);
         if (!account) return this.finish("KEEPER_KEY is not set");
         const clients = (this.clients ??= makeClients());
-        this.signer ??= new Signer(account, clients[1]);
+        this.signer ??= new Signer(account, [clients[0], clients[1]]);
         await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: this.log });
         if (this.keeper.failed >= MAX_KEEPER_FAILURES) return this.finish("too many failures");
         next = Date.now() + 100;
@@ -155,8 +160,14 @@ export class Role {
         const ctx = this.makerCtx(cfg.role);
         if (!ctx) return this.finish("the quoter key is not set");
         const r = await makerTick(ctx);
-        if (r === "stop") return this.finish("sends keep failing");
-        next = t0 + schedule.maker[MAKER_KEY[cfg.role]].refreshMs;
+        if (r === "backoff") {
+          this.backoffs += 1;
+          this.log.warn("sends failing, waiting", { role: cfg.role, waits: this.backoffs });
+          if (this.backoffs >= MAX_BACKOFFS) return this.finish("sends keep failing");
+          next = Date.now() + BACKOFF_MS;
+        } else {
+          next = t0 + schedule.maker[MAKER_KEY[cfg.role]].refreshMs;
+        }
       }
     } catch (err) {
       // A thrown error (a bad key, say) ends the run; it is never retried.

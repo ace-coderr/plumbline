@@ -90,4 +90,11 @@ domain, zone or route.
 * Quotes go stale after 2 s on-chain; the makers refresh every 1 s. A host that stalls for a second or two lapses a quote.
 * The public `/health` is cached, but the free request quota is shared with the bots: someone hammering the URL can still use up
   Worker requests (cron triggers would fail while the Durable Object alarms keep running).
-* A 10-minute probe of alarm timing and RPC latency passed (see the spike); a full 4-hour day has not been run.
+* **Supervised test, 2026-10-26 (20-minute window): not clean.** The campaign opened (v2 #3, both vaults bonded), quotes and
+  probes landed (7 of 8 probes), the kill switch worked (a wrong token gets 401; the right one stops all three bots and `/resume`
+  restarts them), and the cap held (about 0.0016 HYPE spent). But **about half of the makers' `setQuote` sends failed with the
+  RPC's "Rate Limit Exceeded"**, from both public nodes (the primary is also a Conduit endpoint). Cloudflare's shared outbound
+  addresses get a small per-IP allowance, so the 3-poller keeper plus two makers is too much for them. Until the runner has an
+  RPC with its own limit (a Conduit API node URL, from app.conduit.xyz/nodes, set as a secret) the schedule should stay off.
+  The failures cost no gas, and the runner's responses held: makers back off 15 s after ten failures and end after six, the
+  supervisor skips a campaign check that cannot read and halts after three in a row.
