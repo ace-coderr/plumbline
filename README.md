@@ -132,6 +132,43 @@ PLUMBUSD market labels it **demo asset**; it is never rendered as USDC.
   bonds are always posted in its reward token. Slashing still works exactly as it would with USDC;
   the live slash below moved PLUMBUSD.
 
+## Business model and mainnet plan
+
+Plain words, and only what is true today. The plan below describes things that **do not exist yet**; none of it is in the
+contracts.
+
+**Today**
+
+* Testnet only (Elysium, chain 99801). No real funds are involved anywhere.
+* Every reward, bond and probe fee is paid in PLUMBUSD, a mintable demo token with no value.
+* The protocol takes no fee. The contracts have no fee setting, no owner and no admin function that could add one: a campaign's
+  pot goes to makers (what is left after probe fees), probe fees go to whoever sent the probe, and slashed bonds go half to the
+  reporter and half back into the makers' pot.
+
+**Planned fee, only if and when Plumbline goes to mainnet**
+
+* A small cut, 1 to 3 percent, of **sponsor-funded rewards only**: the pot a sponsor puts in when it opens a campaign.
+* **Never a cut of slashes.** If the protocol earned from slashes, it would profit when makers fail, which is the opposite of
+  what a service that checks uptime should want.
+* A maximum written into the contract so it cannot be raised past it, any change to the fee behind a timelock, and the fee shown
+  in the app before a sponsor funds a campaign.
+* It starts at 0.
+* This needs a new contract version. It would go through the audit below before anything is deployed.
+
+**Mainnet gates (none of these is met yet)**
+
+1. An independent audit of the contracts. There has been none; the tests and the verified source are not an audit.
+2. Deposit limits for a capped beta, so early mistakes are small.
+3. The HyperCore reference-price read, which is not live yet. Today a campaign either scores spread around each quote's own
+   midpoint (reference source set to the zero address) or uses an optional on-chain reference source, whose reading is ignored
+   when older than 60 seconds. The maker bot reads Hyperliquid's public price API off-chain for its own quotes. Mainnet scoring
+   against a real reference price stays behind that existing optional-source seam.
+
+**Other revenue ideas (ideas, not commitments)**
+
+* Paid reports or attestations for token teams: a signed, dated summary of a market maker's measured uptime, built from the same
+  public on-chain data anyone can already read for free. Nothing like this is built or priced.
+
 ## How it works
 
 ### 1. Quote vaults: `PlumbQuote` + `PlumbQuoteFactory`

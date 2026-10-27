@@ -226,6 +226,57 @@ export function HowItWorksPage() {
         </Step>
       </div>
 
+      <section className="rounded-card border-2 border-ink bg-paper p-5 shadow-brut sm:p-7">
+        <h2 className="font-display text-2xl font-extrabold tracking-display">Business model and mainnet plan</h2>
+        <div className="mt-3 max-w-3xl space-y-4 text-base leading-7">
+          <p>Only what is true today is stated as fact. The plan describes things that do not exist yet; none of it is in the contracts.</p>
+          <div>
+            <h3 className="font-display text-lg font-extrabold tracking-display">Today</h3>
+            <ul className="mt-1 list-disc space-y-1.5 pl-5">
+              <li>Testnet only. No real funds anywhere. Every reward, bond and probe fee is PLUMBUSD, a demo token with no value.</li>
+              <li>
+                The protocol takes <strong>no fee</strong>. The contracts have no fee setting, no owner and no admin function that could add one. A
+                campaign's pot goes to makers (what is left after probe fees), probe fees go to whoever sent the probe, and slashed bonds go half to
+                the reporter and half back into the makers' pot.
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h3 className="font-display text-lg font-extrabold tracking-display">Planned fee, only if and when it goes to mainnet</h3>
+            <ul className="mt-1 list-disc space-y-1.5 pl-5">
+              <li>A small cut, 1 to 3 percent, of <strong>sponsor-funded rewards only</strong>: the pot a sponsor puts in when it opens a campaign.</li>
+              <li>
+                <strong>Never a cut of slashes.</strong> Earning from slashes would reward the protocol when makers fail, the opposite of what a service
+                that checks uptime should want.
+              </li>
+              <li>A maximum written into the contract, changes only behind a timelock, and the fee shown in the app before a sponsor funds a campaign. It starts at 0.</li>
+              <li>This needs a new contract version, which would go through the audit below first. Nothing of it is built.</li>
+            </ul>
+          </div>
+          <div>
+            <h3 className="font-display text-lg font-extrabold tracking-display">Mainnet gates (none is met yet)</h3>
+            <ol className="mt-1 list-decimal space-y-1.5 pl-5">
+              <li>An independent audit. There has been none; tests and verified source are not an audit.</li>
+              <li>Deposit limits for a capped beta, so early mistakes are small.</li>
+              <li>
+                The HyperCore reference-price read, which is not live yet. Today a campaign scores spread around each quote's own midpoint, or uses an
+                optional on-chain reference source whose reading is ignored when older than 60 seconds. Mainnet scoring against a real reference price
+                stays behind that existing optional source.
+              </li>
+            </ol>
+          </div>
+          <div>
+            <h3 className="font-display text-lg font-extrabold tracking-display">Other revenue ideas (ideas, not commitments)</h3>
+            <ul className="mt-1 list-disc space-y-1.5 pl-5">
+              <li>
+                Paid reports or attestations for token teams: a signed, dated summary of a market maker's measured uptime, built from the same public
+                on-chain data anyone can already read. Nothing like this is built or priced.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <section className="space-y-4">
         <h2 className="display text-[32px] leading-[1] sm:text-[44px]">FAQ</h2>
 
