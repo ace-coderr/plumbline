@@ -9,6 +9,7 @@ import { useLive } from "../lib/liveStore";
 import { dateTime, fmtInt, short } from "../lib/format";
 import { useNow } from "../components/Snapshot";
 import { AddrLink, Badge, Page, PageHeader, Panel, Table, Td, Th } from "../components/ui";
+import { TreasuryPanel } from "../components/TreasuryPanel";
 
 interface RpcRow {
   url: string;
@@ -200,6 +201,8 @@ export function StatusPage() {
           quoters or probe sent by the keeper wallet, read from the chain. It shows what the wallets did, not whether the host is up.
         </p>
       </Panel>
+
+      <TreasuryPanel />
 
       <Panel title="Quote age per vault" className="mt-6" pad={false}>
         {views === null ? (
