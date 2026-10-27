@@ -181,6 +181,26 @@ export function TestnetNote({ className = "" }: { className?: string }) {
   );
 }
 
+/**
+ * The site footer, in the same container as the page: the brand, a line about it and the demo note on the
+ * left, the three link columns on the right. One column on a phone. The fixed status bar below it is a
+ * separate element and the page's bottom padding keeps the two apart.
+ */
+export function SiteFooter() {
+  return (
+    <div className="no-print mt-10 grid gap-8 border-t-2 border-ink pt-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-16">
+      <div className="min-w-0 max-w-xl">
+        <Link to="/" aria-label="Plumbline home" className="inline-block focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
+          <Wordmark size={26} />
+        </Link>
+        <p className="mt-2 text-sm font-semibold text-ink">Probe-verified market-making uptime on Elysium.</p>
+        <TestnetNote className="mt-3" />
+      </div>
+      <SiteFooterLinks />
+    </div>
+  );
+}
+
 export function Layout() {
   const { pathname } = useLocation();
   const [menu, setMenu] = useState(false);
@@ -209,8 +229,7 @@ export function Layout() {
           </div>
         )}
         <Outlet />
-        <SiteFooterLinks />
-        <TestnetNote className="no-print mt-6 max-w-3xl" />
+        <SiteFooter />
       </main>
       <StatusBar />
     </div>

@@ -283,7 +283,7 @@ export function MobilePanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Every page, grouped as in the header. */
+/** Every page, grouped as in the header: the link columns of the site footer. */
 export function SiteFooterLinks() {
   const { pathname } = useLocation();
   const groups: { title: string; items: NavLeaf[] }[] = [
@@ -291,7 +291,7 @@ export function SiteFooterLinks() {
     ...NAV.filter(isGroup).map((g) => ({ title: g.label, items: g.items })),
   ];
   return (
-    <nav aria-label="Site map" className="no-print mt-10 grid max-w-3xl grid-cols-2 gap-x-6 gap-y-5 border-t-2 border-ink pt-4 sm:grid-cols-3">
+    <nav aria-label="Site map" className="no-print grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-3 lg:grid-cols-[repeat(3,auto)] lg:gap-x-14 lg:justify-self-end">
       {groups.map((g) => (
         <div key={g.title}>
           <h2 className="label text-muted">{g.title}</h2>
