@@ -5,6 +5,7 @@
  *   pnpm runner topup-test <wallet> <hype>      one live transfer of at most 0.001 HYPE to a listed wallet
  *   pnpm runner new-wallet <ENV_NAME>           makes a key, saves it in .env, prints only the address
  *   pnpm runner put-secrets [SECRET ...]        sends values from .env to Cloudflare secrets (all if none named)
+ *   pnpm runner set-env <NAME>                  asks for a value in this terminal (hidden as you type) and saves it to .env
  *   pnpm runner find-chat-id                    reads your Telegram chat id after you message the bot, saves it
  *   pnpm runner secrets                         lists the secret NAMES the Worker has
  *   pnpm runner mint <sponsor|faucet> <amount>  mints demo PLUMBUSD (whole tokens, at most 1,000,000) with the deployer key from .env
@@ -36,11 +37,12 @@ const SECRETS: Record<string, string> = {
   CONDUIT_RPC_URL: "CONDUIT_RPC_URL",
   TELEGRAM_BOT_TOKEN: "TELEGRAM_BOT_TOKEN",
   TELEGRAM_CHAT_ID: "TELEGRAM_CHAT_ID",
+  HEALTHCHECK_URL: "HEALTHCHECK_URL",
 };
 
 const secretValues = () =>
   Object.entries(env)
-    .filter(([k, v]) => /KEY|TOKEN|SECRET|PRIVATE|RPC_URL|CHAT_ID/.test(k) && typeof v === "string" && v.length >= 8)
+    .filter(([k, v]) => /KEY|TOKEN|SECRET|PRIVATE|RPC_URL|CHAT_ID|HEALTHCHECK/.test(k) && typeof v === "string" && v.length >= 8)
     .map(([, v]) => v as string);
 const scrub = (s: string) => secretValues().reduce((a, v) => a.split(v).join("[redacted]"), s);
 const die = (m: string): never => {
@@ -132,6 +134,48 @@ async function mint(who: string | undefined, amount: string | undefined): Promis
   if (rc.status !== "success") process.exit(1);
 }
 
+/**
+ * Saves one value to .env after asking for it in this terminal, hidden as you type, so it is never in a chat, a command line
+ * or the shell history. Only names the helper already knows may be set.
+ */
+async function setEnv(name: string | undefined): Promise<void> {
+  const allowed = [...new Set([...Object.values(SECRETS), "RUNNER_URL"])].filter((n) => n !== "TELEGRAM_CHAT_ID");
+  if (!name || !allowed.includes(name)) return die(`usage: pnpm runner set-env <NAME>, where NAME is one of: ${allowed.join(", ")}`);
+  if (!process.stdin.isTTY || !process.stdin.setRawMode) return die("run this in a terminal tab you can type in (it hides what you type); it cannot read from a pipe");
+  const file = join(ROOT, ".env");
+  const cur = readFileSync(file, "utf8");
+  if (new RegExp(`^${name}=.+`, "m").test(cur)) return die(`${name} is already in .env. To replace it, delete that line in your editor first.`);
+  process.stdout.write(`Paste or type the value for ${name}, then press Enter (nothing will show): `);
+  const value = await new Promise<string>((resolve) => {
+    let buf = "";
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.off("data", onData);
+          process.stdout.write("\n");
+          return resolve(buf.trim());
+        }
+        if (ch === "\u0003") {
+          process.stdin.setRawMode(false);
+          process.exit(130);
+        }
+        if (ch === "\u007f" || ch === "\b") buf = buf.slice(0, -1);
+        else buf += ch;
+      }
+    };
+    process.stdin.on("data", onData);
+  });
+  if (value.length < 8) return die("that looks too short to be right; nothing was saved");
+  if (/URL$/.test(name) && !value.startsWith("https://")) return die("that is not an https:// address; nothing was saved");
+  appendFileSync(file, `${cur.endsWith("\n") ? "" : "\n"}${name}=${value}\n`);
+  console.log(`${name} saved to .env (${value.length} characters, not shown).${name in SECRETS ? ` Next: pnpm runner put-secrets ${name}` : ""}`);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 switch (cmd) {
   case "kill":
@@ -153,6 +197,9 @@ switch (cmd) {
   case "mint":
     await mint(rest[0], rest[1]);
     break;
+  case "set-env":
+    await setEnv(rest[0]);
+    break;
   case "find-chat-id":
     await findChatId();
     break;
@@ -163,5 +210,5 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("commands: kill, resume, tick, alert-test, topup-plan, topup-test <wallet> <hype>, new-wallet <ENV_NAME>, put-secrets [NAME...], find-chat-id, secrets, mint <sponsor|faucet> <amount>");
+    console.log("commands: kill, resume, tick, alert-test, topup-plan, topup-test <wallet> <hype>, new-wallet <ENV_NAME>, put-secrets [NAME...], find-chat-id, secrets, mint <sponsor|faucet> <amount>, set-env <NAME>");
 }
