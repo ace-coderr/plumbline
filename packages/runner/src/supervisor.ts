@@ -18,6 +18,18 @@ import type { RoleName } from "./role.js";
 
 const ROLES: RoleName[] = ["keeper", "makerA", "makerB"];
 const TICK_MS = 20_000;
+/** The heartbeat: how often, how stale the previous tick may be, and how long one ping may take. */
+const HEARTBEAT_EVERY_S = 300;
+const HEARTBEAT_MAX_TICK_AGE_S = 180;
+const HEARTBEAT_TIMEOUT_MS = 5_000;
+
+interface HeartbeatState {
+  at: number;
+  /** Whether the last ping was answered with a success; null before the first. */
+  ok: boolean | null;
+  failures: number;
+  lastError: string | null;
+}
 /** The campaign check runs this often, not on every tick. */
 const CAMPAIGN_CHECK_MS = 60_000;
 
@@ -204,6 +216,11 @@ export class Supervisor {
       lastDecision: (await this.get<unknown>("lastDecision")) ?? null,
       lastSummary: (await this.get<unknown>("lastSummary")) ?? null,
       alertFailures: (await this.get<unknown>("alertFailures")) ?? null,
+      heartbeat: {
+        configured: Boolean(this.env.HEALTHCHECK_URL),
+        last: (await this.get<HeartbeatState>("heartbeat")) ?? null,
+        skipped: (await this.get<unknown>("heartbeatSkipped")) ?? null,
+      },
       treasury: {
         address: schedule.treasury.address,
         topUpsOn: schedule.topUp.enabled,
@@ -398,13 +415,58 @@ export class Supervisor {
     if (this.busy) return;
     this.busy = true;
     try {
-      await this.tickOnce();
-    } catch (err) {
-      // An uncaught exception must not end the alarm chain: say so, and look again in 20 seconds.
-      await this.fail("tick", err);
-      await this.state.storage.setAlarm(Date.now() + TICK_MS).catch(() => undefined);
+      // The tick before this one: if it was long ago the cron has been missing, and that is not healthy.
+      const previousTick = (await this.get<number>("lastTickAt")) ?? null;
+      let ticked = true;
+      try {
+        await this.tickOnce();
+      } catch (err) {
+        // An uncaught exception must not end the alarm chain: say so, and look again in 20 seconds.
+        ticked = false;
+        await this.fail("tick", err);
+        await this.state.storage.setAlarm(Date.now() + TICK_MS).catch(() => undefined);
+      }
+      await this.heartbeat(Math.floor(Date.now() / 1000), previousTick, ticked);
     } finally {
       this.busy = false;
+    }
+  }
+
+  /**
+   * Every five minutes, in a window or not, one GET to the heartbeat monitor's address (the secret HEALTHCHECK_URL), and only if the
+   * runner is healthy: this tick ran, the last one was recent, the kill switch is off and no halt is in force. A monitor that stops
+   * hearing from it raises its own alarm. With no secret nothing happens. One attempt, a short timeout, no retry; a failure is
+   * counted and reported like any other error, never thrown. The address is never logged or put in a message.
+   */
+  private async heartbeat(now: number, previousTick: number | null, ticked: boolean): Promise<void> {
+    const url = this.env.HEALTHCHECK_URL;
+    if (!url) return;
+    try {
+      const last = (await this.get<HeartbeatState>("heartbeat")) ?? { at: 0, ok: null, failures: 0, lastError: null };
+      if (now - last.at < HEARTBEAT_EVERY_S) return;
+      const killed = (await this.get<boolean>("killed")) ?? false;
+      const halt = await this.get<Halt>("halt");
+      const w = windowAt(schedule, now);
+      const haltInForce = halt !== undefined && (halt.kind === "cap" ? halt.day === utcDay(now) : w !== null && halt.windowStart === w.start);
+      const fresh = previousTick === null || now - previousTick <= HEARTBEAT_MAX_TICK_AGE_S;
+      if (!ticked || killed || haltInForce || !fresh) {
+        await this.state.storage.put("heartbeatSkipped", { at: now, reason: !ticked ? "the tick failed" : killed ? "the kill switch is on" : haltInForce ? "a halt is in force" : "the last tick was not recent" });
+        return;
+      }
+      await this.state.storage.put("heartbeat", { ...last, at: now });
+      try {
+        const res = await fetch(url, { method: "GET", signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS) });
+        await res.body?.cancel();
+        if (!res.ok) throw new Error(`the heartbeat monitor answered ${res.status}`);
+        await this.state.storage.put("heartbeat", { at: now, ok: true, failures: last.failures, lastError: null } satisfies HeartbeatState);
+      } catch (err) {
+        const text = shortError(errText(err), this.redact, 80);
+        await this.state.storage.put("heartbeat", { at: now, ok: false, failures: last.failures + 1, lastError: text } satisfies HeartbeatState);
+        await this.reportError("supervisor", "heartbeat ping", errorType(err), errText(err));
+      }
+    } catch (err) {
+      // The bookkeeping itself failed: say so (the text is scrubbed) and carry on.
+      this.log.warn("heartbeat bookkeeping failed", { err: errText(err) });
     }
   }
 

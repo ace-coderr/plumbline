@@ -25,6 +25,8 @@ export interface Env {
   /** Telegram bot token and the chat id to alert (both set by the owner). */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  /** A heartbeat monitor's ping address (it usually carries an ID in the path). Optional; read only by the supervisor. */
+  HEALTHCHECK_URL?: string;
 }
 
 /** Which secret holds which wallet's key. */
@@ -37,7 +39,7 @@ export const WALLET_SECRET: Record<RunnerWallet, keyof Env> = {
   makerB: "MAKER_B_KEY",
 };
 
-export const SECRET_NAMES = [...Object.values(WALLET_SECRET), "ADMIN_TOKEN", "CONDUIT_RPC_URL", "TREASURY_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"] as const;
+export const SECRET_NAMES = [...Object.values(WALLET_SECRET), "ADMIN_TOKEN", "CONDUIT_RPC_URL", "TREASURY_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "HEALTHCHECK_URL"] as const;
 
 /** Every secret value present, and the parts of a URL secret that carry its key, for the redactor. */
 export function secretValues(env: Env): string[] {
