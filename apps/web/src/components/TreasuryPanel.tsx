@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { createPublicClient, fallback, http, formatEther, type Address } from "viem";
-import { ELYSIUM_TESTNET, RUNNER_WALLETS, elysiumTestnet, txUrl, type RunnerWallet } from "@plumbline/shared";
+import { createPublicClient, erc20Abi, fallback, http, formatEther, type Address } from "viem";
+import { ELYSIUM_TESTNET, RUNNER_WALLETS, deployment, elysiumTestnet, faucetDeployment, txUrl, type RunnerWallet } from "@plumbline/shared";
 import { botsSchedule as sched } from "../lib/schedule";
 import { RPC_URLS } from "../lib/chain";
+import { fmtInt } from "../lib/format";
 import { AddrLink, Badge, Panel, Table, Td, Th } from "./ui";
 
 const client = createPublicClient({ chain: elysiumTestnet, transport: fallback(RPC_URLS.map((u) => http(u, { timeout: 8_000, retryCount: 0 }))) });
@@ -18,6 +19,20 @@ interface Funding {
   treasuryWei: bigint;
   wallets: { wallet: RunnerWallet; address: Address; wei: bigint }[];
   last: TopUpTx | null;
+  /** Whole PLUMBUSD at the faucet pool and the sponsor wallet; null when unreadable or not set. */
+  plumbusd: { faucet: number | null; sponsor: number | null };
+}
+
+const PLUMBUSD = (deployment.demoTokens as Record<string, { address: Address; decimals: number }>).PLUMBUSD as { address: Address; decimals: number };
+
+async function plumbusdOf(who: Address | null | undefined): Promise<number | null> {
+  if (!who) return null;
+  try {
+    const raw = await client.readContract({ address: PLUMBUSD.address, abi: erc20Abi, functionName: "balanceOf", args: [who] });
+    return Number(raw) / 10 ** PLUMBUSD.decimals;
+  } catch {
+    return null;
+  }
 }
 
 const hype = (wei: bigint, digits = 4): string => Number(formatEther(wei)).toFixed(digits);
@@ -40,7 +55,8 @@ async function readFunding(treasury: Address): Promise<Funding> {
   const wallets = RUNNER_WALLETS.flatMap((wallet) => (sched.wallets[wallet] ? [{ wallet, address: sched.wallets[wallet] as Address }] : []));
   const [treasuryWei, ...rest] = await Promise.all([client.getBalance({ address: treasury }), ...wallets.map((w) => client.getBalance({ address: w.address }))]);
   const last = await lastTopUp(treasury).catch(() => null);
-  return { treasuryWei, wallets: wallets.map((w, i) => ({ ...w, wei: rest[i] as bigint })), last };
+  const [faucet, sponsor] = await Promise.all([plumbusdOf(faucetDeployment?.address), plumbusdOf(sched.wallets.sponsor)]);
+  return { treasuryWei, wallets: wallets.map((w, i) => ({ ...w, wei: rest[i] as bigint })), last, plumbusd: { faucet, sponsor } };
 }
 
 /** Days of the measured daily spend a wallet still holds above its floor. */
@@ -102,6 +118,17 @@ export function TreasuryPanel() {
                 )}
               </dd>
             </div>
+            {([
+              ["Faucet pool (PLUMBUSD)", q.data.plumbusd.faucet, sched.alerts.faucetLowPlumbusd],
+              ["Sponsor wallet (PLUMBUSD)", q.data.plumbusd.sponsor, sched.alerts.sponsorLowPlumbusd],
+            ] as const).map(([k, v, lowAt]) => (
+              <div key={k} className="flex flex-wrap justify-between gap-x-3">
+                <dt className="text-muted">{k}</dt>
+                <dd className="num text-right font-semibold text-ink">
+                  {v === null ? "not readable right now" : fmtInt(Math.floor(v))} {v !== null && v < lowAt ? <Badge tone="warn">under {fmtInt(lowAt)}</Badge> : null}
+                </dd>
+              </div>
+            ))}
             <div className="flex flex-wrap justify-between gap-x-3">
               <dt className="text-muted">Rule</dt>
               <dd className="text-right">
