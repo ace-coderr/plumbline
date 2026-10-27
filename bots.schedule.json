@@ -48,5 +48,5 @@
     "perWalletPerDayHype": 1.0,
     "totalPerDayHype": 2.0
   },
-  "alerts": { "repeatMinutes": 60 }
+  "alerts": { "repeatMinutes": 60, "faucetLowPlumbusd": 20000, "sponsorLowPlumbusd": 2000 }
 }

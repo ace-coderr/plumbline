@@ -78,7 +78,14 @@ export interface BotsSchedule {
   referenceCoin: string;
   treasury: TreasurySettings;
   topUp: TopUpSettings;
-  alerts: { /** The same alert is not sent again within this many minutes. */ repeatMinutes: number };
+  alerts: {
+    /** The same alert is not sent again within this many minutes. */
+    repeatMinutes: number;
+    /** Alert when the faucet pool holds less PLUMBUSD than this. */
+    faucetLowPlumbusd: number;
+    /** Alert when the sponsor wallet holds less PLUMBUSD than this. */
+    sponsorLowPlumbusd: number;
+  };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -174,7 +181,7 @@ export function parseSchedule(raw: unknown): BotsSchedule {
   const toDays = num(tu.toDays, "schedule.topUp.toDays", 1, 120);
   if (toDays <= belowDays) throw new Error("schedule.topUp.toDays: must be more than belowDays");
   if (!isObj(raw.alerts)) throw new Error("schedule.alerts: must be an object");
-  only(raw.alerts, ["repeatMinutes"], "schedule.alerts");
+  only(raw.alerts, ["repeatMinutes", "faucetLowPlumbusd", "sponsorLowPlumbusd"], "schedule.alerts");
   return {
     enabled: raw.enabled,
     windows,
@@ -209,7 +216,11 @@ export function parseSchedule(raw: unknown): BotsSchedule {
       perWalletPerDayHype: num(tu.perWalletPerDayHype, "schedule.topUp.perWalletPerDayHype", 0, 100),
       totalPerDayHype: num(tu.totalPerDayHype, "schedule.topUp.totalPerDayHype", 0, 1000),
     },
-    alerts: { repeatMinutes: num(raw.alerts.repeatMinutes, "schedule.alerts.repeatMinutes", 1, 1440) },
+    alerts: {
+      repeatMinutes: num(raw.alerts.repeatMinutes, "schedule.alerts.repeatMinutes", 1, 1440),
+      faucetLowPlumbusd: num(raw.alerts.faucetLowPlumbusd, "schedule.alerts.faucetLowPlumbusd", 0, 1e9),
+      sponsorLowPlumbusd: num(raw.alerts.sponsorLowPlumbusd, "schedule.alerts.sponsorLowPlumbusd", 0, 1e9),
+    },
   };
 }
 
