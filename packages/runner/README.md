@@ -77,7 +77,7 @@ through the same guarded path.
 
 Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as secrets (never paste them anywhere). Alerts go only to that chat: treasury under 0.5 HYPE
 or empty, a failed top-up, a halt (cap, floor, config, rpc), a bot that ended early, the private node failing, the kill switch and
-`/resume`, and one summary after each window (probes, HYPE spent, least funding left). The same alert is never sent twice within
+`/resume`, and one summary a minute after each window. The summary is built from the chain, not from the runner's counters: the keeper's transactions and the `Probed` events in the window (sent, landed, reverted with a percentage, settles, gas), then the whole-UTC-day HYPE spent (labelled as such) and the least funding left. The keeper's counters are also kept in Durable Object storage for the window, so a restart does not lose them, and a mid-window restart is reported with its time. The same alert is never sent twice within
 `alerts.repeatMinutes` (60). Every message passes the redactor. `POST /alert-test` sends a test message.
 
 Floors (`floorHype`) stop the run before a wallet is empty: 0.0003 HYPE for the keeper and quoters, 0.0004 for the sponsor.
