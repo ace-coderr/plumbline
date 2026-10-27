@@ -61,6 +61,27 @@ export const msg = {
   faucetLow: (plumbusd: number, lowAt: number) => `Plumbline runner: the faucet pool holds ${Math.floor(plumbusd).toLocaleString("en-US")} PLUMBUSD, under ${lowAt.toLocaleString("en-US")}. Mint more from the deployer.`,
   sponsorLow: (plumbusd: number, lowAt: number) => `Plumbline runner: the sponsor wallet holds ${Math.floor(plumbusd).toLocaleString("en-US")} PLUMBUSD, under ${lowAt.toLocaleString("en-US")}. Mint more from the deployer.`,
   test: () => `Plumbline runner: test alert. If you can read this, alerts work.`,
-  summary: (s: { probesLanded: number; probesSent: number; probesReverted: number; spentWei: bigint; minDays: number; worst: string; treasuryWei: bigint }) =>
-    `Plumbline runner, window done: ${s.probesLanded} probes landed (${s.probesSent} sent, ${s.probesReverted} reverted), ${hype(s.spentWei)} HYPE spent. Least funding left: ${s.worst}, ${s.minDays.toFixed(1)} days. Treasury ${hype(s.treasuryWei)} HYPE.`,
+  /** After each window: figures from the chain for the window, then the whole-day HYPE figure, labelled as such. */
+  summary: (s: {
+    label: string;
+    window: { sent: number; landed: number; reverted: number; revertedPct: number; settles: number; gasWei: bigint; revertedGasWei: bigint; revertedGasUsed: bigint; mismatch: boolean } | null;
+    /** Why the chain figures are missing, and the runner's own counters instead, if so. */
+    unavailable?: { reason: string; counters: { sent: number; landed: number; reverted: number } | null };
+    dayWei: bigint;
+    minDays: number;
+    worst: string;
+    treasuryWei: bigint;
+    restarts: number[];
+  }) => {
+    const w = s.window;
+    const head = w
+      ? `Plumbline runner, window ${s.label}: ${w.sent} probes sent, ${w.landed} landed, ${w.reverted} reverted (${w.revertedPct.toFixed(1)}%), ${w.settles} settles. Keeper gas in the window: ${hype(w.gasWei)} HYPE (reverted probes: ${hype(w.revertedGasWei)} HYPE, ${w.revertedGasUsed.toString()} gas).`
+      : `Plumbline runner, window ${s.label}: chain figures unavailable (${s.unavailable?.reason ?? "unknown"}).${s.unavailable?.counters ? ` The runner's own counters, which may be partial: ${s.unavailable.counters.sent} sent, ${s.unavailable.counters.landed} landed, ${s.unavailable.counters.reverted} reverted.` : ""}`;
+    const lines = [head];
+    if (w?.mismatch) lines.push("Check: landed does not equal sent minus reverted, so some probe is unaccounted for.");
+    if (s.restarts.length) lines.push(`The keeper restarted ${s.restarts.length} time(s) in the window, at ${s.restarts.map((t) => new Date(t * 1000).toISOString().slice(11, 19)).join(", ")} UTC.`);
+    lines.push(`HYPE spent today (the whole UTC day so far, all six runner wallets, by balance change): ${hype(s.dayWei)}. Least funding left: ${s.worst}, ${s.minDays.toFixed(1)} days. Treasury ${hype(s.treasuryWei)} HYPE.`);
+    return lines.join("\n");
+  },
+  keeperRestarted: (atSec: number, role: string) => `Plumbline runner: the ${role} bot restarted mid-window at ${new Date(atSec * 1000).toISOString().slice(11, 19)} UTC. Its counters were kept.`,
 };

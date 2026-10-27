@@ -1,6 +1,8 @@
 import { erc20Abi, type PublicClient } from "viem";
 import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbline/shared";
-import { FAUCET, PLUMBUSD, schedule } from "./config.js";
+import { CAMPAIGNS, FAUCET, PLUMBUSD, schedule } from "./config.js";
+import { fetchWindowFigures } from "./windowData.js";
+import { windowLabel } from "./core/windowSummary.js";
 import { makeClients, readBalances, takeFallbacks, tryEach } from "./chain.js";
 import { ensureCampaign } from "./campaign.js";
 import { redactorFor, type Env } from "./env.js";
@@ -193,23 +195,33 @@ export class Supervisor {
     if (!e || typeof e.kind !== "string") return safeJson({ ok: false });
     const role = typeof e.role === "string" && (ROLES as string[]).includes(e.role) ? e.role : "a bot";
     if (e.kind === "fallback") await this.alert("fallback", msg.rpcFallback());
+    if (e.kind === "restarted" && typeof e.at === "number") await this.alert(`restarted:${role}`, msg.keeperRestarted(e.at, role));
     if (e.kind === "ended" && typeof e.reason === "string") {
-      if (e.reason === "the window ended") {
-        if (role === "keeper") await this.summary(Number(e.probesSent) || 0, Number(e.probesLanded) || 0, Number(e.probesReverted) || 0);
-      } else if (e.reason !== "the supervisor said stop") {
+      // A normal end needs nothing here: the window summary is built from the chain by the tick after the window.
+      if (e.reason !== "the window ended" && e.reason !== "the supervisor said stop") {
         await this.alert(`failed:${role}`, msg.windowFailed(role, e.reason));
       }
     }
     return safeJson({ ok: true });
   }
 
-  /** The short message after each window: probes, HYPE spent today, and the least funding left. */
-  private async summary(probesSent: number, probesLanded: number, probesReverted: number): Promise<void> {
+  /**
+   * One tick after a window ends (once): the window's figures read from the chain, the whole-day HYPE figure,
+   * the least funding left, and any restart the keeper had. If the chain cannot be read it says so and shows
+   * the keeper's saved counters instead, marked as possibly partial.
+   */
+  private async summarizeWindow(due: { start: number; end: number }): Promise<void> {
     try {
       const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
+      const keeperAddr = schedule.wallets.keeper;
+      const [chainRes, keeperState] = await Promise.all([
+        keeperAddr ? fetchWindowFigures(fetch, keeperAddr, CAMPAIGNS, due.start, due.end) : Promise.resolve({ ok: false as const, reason: "no keeper address in the schedule" }),
+        this.env.ROLE.get(this.env.ROLE.idFromName("keeper")).fetch("https://role/state").then((r) => r.json() as Promise<{ saved?: { runId: number; keeper: { probesSent: number; probesLanded: number; probesReverted: number }; restarts: number[] } }>).catch(() => ({}) as { saved?: undefined }),
+      ]);
+      const saved = keeperState.saved && keeperState.saved.runId === due.start ? keeperState.saved : null;
       const balances = await tryEach(clients, (c) => readBalances(c, schedule));
       const stored = await this.get<{ day: string; balances: Record<string, string> }>("dayStart");
-      const spentWei = stored ? spentToday({ day: stored.day, balances: parse(stored.balances) }, balances) : 0n;
+      const dayWei = stored ? spentToday({ day: stored.day, balances: parse(stored.balances) }, balances) : 0n;
       let worst = "";
       let minDays = Infinity;
       for (const w of RUNNER_WALLETS) {
@@ -218,8 +230,21 @@ export class Supervisor {
         if (d < minDays) [minDays, worst] = [d, w];
       }
       const treasuryWei = (await treasuryBalance({ clients, schedule })) ?? 0n;
-      const start = windowAt(schedule, Math.floor(Date.now() / 1000) - 1)?.start ?? 0;
-      await this.alert(`summary:${start}`, msg.summary({ probesLanded, probesSent, probesReverted, spentWei, minDays: Number.isFinite(minDays) ? minDays : 0, worst, treasuryWei }));
+      const f = chainRes.ok ? chainRes.figures : null;
+      await this.alert(
+        `summary:${due.start}`,
+        msg.summary({
+          label: windowLabel(due.start, due.end),
+          window: f && { sent: f.probesSent, landed: f.probesLanded, reverted: f.probesReverted, revertedPct: f.revertedPct, settles: f.settles, gasWei: f.gasWei, revertedGasWei: f.revertedGasWei, revertedGasUsed: f.revertedGasUsed, mismatch: f.mismatch },
+          unavailable: f ? undefined : { reason: chainRes.ok ? "unknown" : chainRes.reason, counters: saved ? { sent: saved.keeper.probesSent, landed: saved.keeper.probesLanded, reverted: saved.keeper.probesReverted } : null },
+          dayWei,
+          minDays: Number.isFinite(minDays) ? minDays : 0,
+          worst,
+          treasuryWei,
+          restarts: saved?.restarts ?? [],
+        }),
+      );
+      await this.state.storage.put("lastSummary", { window: due.start, at: Math.floor(Date.now() / 1000), figures: f && { ...f, gasUsedTotal: f.gasUsedTotal.toString(), gasWei: f.gasWei.toString(), revertedGasUsed: f.revertedGasUsed.toString(), revertedGasWei: f.revertedGasWei.toString() } });
     } catch (err) {
       this.log.warn("summary not sent", { err: errText(err) });
     }
@@ -314,6 +339,12 @@ export class Supervisor {
     const now = Math.floor(Date.now() / 1000);
     await this.state.storage.put("lastTickAt", now);
     await this.checkPlumbusd(now);
+    // A finished window gets its summary once, a minute after it ended.
+    const due = await this.get<{ start: number; end: number }>("summaryDue");
+    if (due && now >= due.end + 60) {
+      await this.state.storage.delete("summaryDue");
+      await this.summarizeWindow(due);
+    }
     const killed = (await this.get<boolean>("killed")) ?? false;
     // Nothing to do (switched off, killed, or outside a window): answer without a single network call.
     const quick = decide({ schedule, nowSec: now, killed, halt: null, balances: null, dayStart: null });
@@ -423,6 +454,7 @@ export class Supervisor {
         ),
       );
       await this.state.storage.put("rolesRunning", true);
+      await this.state.storage.put("summaryDue", { start: window.start, end: window.end });
       this.log.info("window started", { start: window.start, end: window.end, capWei: toWei(schedule.dailyHypeCap).toString(), spentWei: d.spentWei.toString() });
     }
   }
