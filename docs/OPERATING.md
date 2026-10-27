@@ -103,6 +103,8 @@ Every message starts with "Plumbline runner:". Alerts go only to your chat. The 
 | `the sponsor wallet holds X PLUMBUSD` | The sponsor is below 2,000 and may not be able to open the next campaign. | Mint more (below). |
 | `the <bot> bot restarted mid-window at HH:MM:SS UTC` | Cloudflare restarted that bot's Durable Object. Its counters were kept. | Nothing. The window summary lists restarts. |
 | `window 13:00–17:00 UTC: N probes sent, ...` | The daily summary, built from the chain: probes sent, landed, reverted (with %), settles and the keeper's gas for the window. The last lines give HYPE spent over the **whole UTC day** and the least funding left. | Read it. If "least funding left" is a few days and the treasury is empty, fund the treasury. |
+| `Health: all checks passed` / `Health: N failed` (the last lines of the daily summary) | The same checks as `pnpm check:all`, run a minute after each window: RPC nodes, the runner's own state, every wallet against its floor, the treasury, the sponsor and faucet PLUMBUSD, and the window figures against the chain. Passing groups show one `PASS` line; a failure shows its own `FAIL` line. | Act on each `FAIL` line using the table in [section 1](#1-is-everything-healthy-start-here). |
+| `N health check(s) failed after the window` | A separate message, sent only when something in the Health block failed (once an hour at most), so it is not missed inside the daily summary. | Same as above. |
 | `test alert` | You (or `check:all`) asked for a test. | Nothing. |
 
 ### PLUMBUSD low
