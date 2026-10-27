@@ -27,6 +27,8 @@ export interface KeeperState {
   probesLanded: number;
   probesReverted: number;
   settles: number;
+  /** Probe or settle transactions the node refused to take. */
+  sendsFailed: number;
   failed: number;
   lastProbeAt: number;
   lastError: string | null;
@@ -46,10 +48,42 @@ export const newKeeperState = (): KeeperState => ({
   probesLanded: 0,
   probesReverted: 0,
   settles: 0,
+  sendsFailed: 0,
   failed: 0,
   lastProbeAt: 0,
   lastError: null,
 });
+
+/** The counters and unresolved probes that must outlive a restart of the Durable Object. */
+export interface KeeperSaved {
+  probesSent: number;
+  probesLanded: number;
+  probesReverted: number;
+  settles: number;
+  sendsFailed: number;
+  failed: number;
+  pending: KeeperState["pending"];
+}
+
+export const saveKeeper = (s: KeeperState): KeeperSaved => ({
+  probesSent: s.probesSent,
+  probesLanded: s.probesLanded,
+  probesReverted: s.probesReverted,
+  settles: s.settles,
+  sendsFailed: s.sendsFailed,
+  failed: s.failed,
+  pending: s.pending,
+});
+
+export function restoreKeeper(s: KeeperState, saved: Partial<KeeperSaved>): void {
+  s.probesSent = saved.probesSent ?? 0;
+  s.probesLanded = saved.probesLanded ?? 0;
+  s.probesReverted = saved.probesReverted ?? 0;
+  s.settles = saved.settles ?? 0;
+  s.sendsFailed = saved.sendsFailed ?? 0;
+  s.failed = saved.failed ?? 0;
+  s.pending = saved.pending ?? [];
+}
 
 export interface KeeperCtx {
   signer: Signer;
@@ -144,6 +178,7 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
           used += 1;
         } catch (err) {
           st.failed += 1;
+          st.sendsFailed += 1;
           st.lastError = errText(err);
           c.log.warn("settle failed", { id: due.id, err: st.lastError });
         }
@@ -199,6 +234,7 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
           used += 1;
         } catch (err) {
           st.failed += 1;
+          st.sendsFailed += 1;
           st.lastError = errText(err);
           c.log.warn("probe send failed", { id, err: st.lastError });
         }

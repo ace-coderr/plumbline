@@ -5,9 +5,19 @@ import { Signer, makeClients, takeFallbacks } from "./chain.js";
 import { accountFor, redactorFor, type Env } from "./env.js";
 import { errText, makeLogger, setRedactor, withFields, type Logger, safeJson } from "./core/log.js";
 import { cancelQuote, makerTick, newMakerState, type MakerState } from "./maker.js";
-import { keeperBurst, newKeeperState, type KeeperState } from "./keeper.js";
+import { keeperBurst, newKeeperState, restoreKeeper, saveKeeper, type KeeperSaved, type KeeperState } from "./keeper.js";
 
 export type RoleName = "keeper" | "makerA" | "makerB";
+
+/** Saved in Durable Object storage for the current window, so a restart does not lose the counts. */
+interface RoleStats {
+  runId: number;
+  role: RoleName;
+  keeper: KeeperSaved;
+  maker: { ticks: number; sent: number; failed: number };
+  /** Unix seconds of each restart seen inside this window. */
+  restarts: number[];
+}
 
 interface RoleConfig {
   role: RoleName;
@@ -51,6 +61,11 @@ export class Role {
   private lastOk = 0;
   private backoffs = 0;
   private lastFallbackTold = 0;
+  /** False after a restart until the first alarm has restored the saved counters. */
+  private booted = false;
+  private lastSaved = "";
+  private lastMakerSaveAt = 0;
+  private restarts: number[] = [];
 
   constructor(
     private readonly state: DurableObjectState,
@@ -59,6 +74,38 @@ export class Role {
     const redact = redactorFor(env);
     setRedactor(redact);
     this.log = makeLogger(redact);
+  }
+
+  private async savedStats(): Promise<RoleStats | null> {
+    return (await this.state.storage.get<RoleStats>("stats")) ?? null;
+  }
+
+  /** The first alarm after a restart: put the saved counters back, remember the restart, and say so. */
+  private async onBoot(cfg: RoleConfig): Promise<void> {
+    this.booted = true;
+    const saved = await this.savedStats();
+    if (!saved || saved.runId !== cfg.runId) return;
+    restoreKeeper(this.keeper, saved.keeper);
+    Object.assign(this.maker, saved.maker);
+    const at = Math.floor(Date.now() / 1000);
+    this.restarts = [...saved.restarts, at];
+    await this.state.storage.put("stats", { ...saved, restarts: this.restarts } satisfies RoleStats);
+    this.lastSaved = JSON.stringify([saveKeeper(this.keeper), saved.maker]);
+    this.log.warn("role restarted mid-window", { role: cfg.role, at });
+    await this.tell({ kind: "restarted", role: cfg.role, at });
+  }
+
+  /** Writes the counters when they changed (a maker's only every 30 s: it sends once a second). */
+  private async saveStats(cfg: RoleConfig, force = false): Promise<void> {
+    const isKeeper = cfg.role === "keeper";
+    if (!isKeeper && !force && Date.now() - this.lastMakerSaveAt < 30_000) return;
+    const keeper = saveKeeper(this.keeper);
+    const maker = { ticks: this.maker.ticks, sent: this.maker.sent, failed: this.maker.failed };
+    const sig = JSON.stringify([keeper, maker]);
+    if (sig === this.lastSaved) return;
+    this.lastSaved = sig;
+    if (!isKeeper) this.lastMakerSaveAt = Date.now();
+    await this.state.storage.put("stats", { runId: cfg.runId, role: cfg.role, keeper, maker, restarts: this.restarts } satisfies RoleStats);
   }
 
   private async cfg(): Promise<RoleConfig | null> {
@@ -78,6 +125,11 @@ export class Role {
       this.lastCheck = Date.now();
       this.lastOk = Date.now();
       this.backoffs = 0;
+      this.booted = true;
+      // A new window starts the counters again; the same window's counters are never cleared.
+      this.lastSaved = "";
+      this.restarts = [];
+      await this.state.storage.put("stats", { runId: body.runId, role: body.role, keeper: saveKeeper(this.keeper), maker: { ticks: 0, sent: 0, failed: 0 }, restarts: [] } satisfies RoleStats);
       await this.state.storage.put("cfg", { role: body.role, runId: body.runId, windowEnd: body.windowEnd, running: true, startedAt: Date.now() } satisfies RoleConfig);
       await this.state.storage.setAlarm(Date.now() + 50);
       this.log.info("role started", { role: body.role, runId: body.runId });
@@ -95,6 +147,7 @@ export class Role {
       runId: cfg?.runId ?? null,
       windowEnd: cfg?.windowEnd ?? null,
       alarmSet: alarm !== null,
+      saved: await this.savedStats(),
       maker: cfg?.role === "keeper" ? undefined : { ticks: this.maker.ticks, sent: this.maker.sent, failed: this.maker.failed, lastSendAt: this.maker.lastSendAt, lastError: this.maker.lastError },
       keeper: cfg?.role === "keeper" ? { bursts: this.keeper.bursts, pollsOk: this.keeper.pollsOk, pollsFailed: this.keeper.pollsFailed, probesSent: this.keeper.probesSent, probesLanded: this.keeper.probesLanded, probesReverted: this.keeper.probesReverted, settles: this.keeper.settles, failed: this.keeper.failed, lastProbeAt: this.keeper.lastProbeAt, lastError: this.keeper.lastError } : undefined,
     });
@@ -114,6 +167,7 @@ export class Role {
     if (cfg) await this.state.storage.put("cfg", { ...cfg, running: false } satisfies RoleConfig);
     await this.state.storage.deleteAlarm();
     this.log.warn("role ended", { role: cfg?.role ?? null, reason });
+    if (cfg?.running) await this.saveStats(cfg, true);
     // A stop the supervisor asked for needs no message back: it knows.
     if (cfg?.running && reason !== "stopped by the supervisor") await this.tell({ kind: "ended", role: cfg.role, reason, ...this.stats(cfg.role) });
   }
@@ -171,6 +225,7 @@ export class Role {
     const cfg = await this.cfg();
     if (!cfg?.running) return;
     const t0 = Date.now();
+    if (!this.booted) await this.onBoot(cfg);
     if (t0 / 1000 >= cfg.windowEnd) return this.finish("the window ended");
     if (t0 - this.lastCheck > CHECK_EVERY_MS) {
       this.lastCheck = t0;
@@ -203,6 +258,7 @@ export class Role {
       // A thrown error (a bad key, say) ends the run; it is never retried.
       return this.finish(`error: ${errText(err)}`);
     }
+    await this.saveStats(cfg);
     // A read or send that had to leave the private node: say so, at most every five minutes.
     if (takeFallbacks() > 0 && Date.now() - this.lastFallbackTold > 300_000) {
       this.lastFallbackTold = Date.now();
