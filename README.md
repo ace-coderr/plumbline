@@ -134,6 +134,8 @@ PLUMBUSD market labels it **demo asset**; it is never rendered as USDC.
 
 ## Business model and mainnet plan
 
+The same text is on the site: [How it works](https://plumbline-elysium.vercel.app/how-it-works).
+
 Plain words, and only what is true today. The plan below describes things that **do not exist yet**; none of it is in the
 contracts.
 
