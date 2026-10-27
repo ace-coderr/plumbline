@@ -47,6 +47,8 @@ or from this folder `npx wrangler secret put NAME` (it asks for the value with h
 | `MAKER_B_KEY` | maker B (owns vault B) | `MAKER_B_PRIVATE_KEY` | `0xA12c…32C3` | ~0.0001 | 1 bond, from the sponsor |
 | `SPONSOR_KEY` | **new wallet** | make one (below) | set `wallets.sponsor` | ~0.001 | ~44 (42 pot + 2 bonds) |
 | `CONDUIT_RPC_URL` | – | a private Conduit node URL, **its API key is in the path**; create it at app.conduit.xyz/nodes | – | – | – |
+| `TREASURY_KEY` | treasury | a wallet made for this; `TREASURY_PRIVATE_KEY` in `.env` | `treasury.address` | – | – |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | – | your bot (from @BotFather) and your own chat id | – | – | – |
 | `ADMIN_TOKEN` | – | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` | – | – | – |
 
 \* At the default schedule, one 4-hour window a day at one quote a second per maker (about 40,000 gas, 0.000004 HYPE, each).
@@ -58,6 +60,25 @@ Sponsor wallet, on your own machine:
 3. Send it HYPE for gas, and give it PLUMBUSD. PLUMBUSD can only be minted by the deployer, **once, by you, by hand**
    (this is not automation): `cast send 0x3A3a8e3D34BB815cc211976C17ccf3376C97d750 "mint(address,uint256)" <sponsor> 400000000 --rpc-url https://testnet-rpc.elysium.kinetiq.xyz --private-key <deployer key, typed in your terminal>`
    mints 400 PLUMBUSD (about nine days). The faucet gives only 100 per address per day.
+
+### Treasury and automatic top-ups
+
+The treasury is a wallet whose only job is to send HYPE to the bot wallets. In a window, at its first tick and then every
+`topUp.checkEveryMinutes`, a wallet holding less than `belowDays` of its measured daily spend (`topUp.dailySpendHype`, above its floor) is
+filled to `toDays`. Limits: `perWalletPerDayHype` and `totalPerDayHype` per UTC day, counted before a transfer is sent, and what the treasury
+holds above `treasury.minHype`. The recipient is always the address `bots.schedule.json` lists for that wallet name; a transfer to anything
+else is refused in code. A failed transfer is tried once and then waits for the next scheduled check. The kill switch stops top-ups (it is
+checked again before each transfer). Top-ups raise the day's starting balances by what was sent, so the daily spend cap still sees spending.
+
+Admin helpers: `POST /topup-plan` is a dry run; `POST /topup-test?wallet=makerA&hype=0.0005` makes one live transfer of at most 0.001 HYPE
+through the same guarded path.
+
+### Telegram alerts
+
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as secrets (never paste them anywhere). Alerts go only to that chat: treasury under 0.5 HYPE
+or empty, a failed top-up, a halt (cap, floor, config, rpc), a bot that ended early, the private node failing, the kill switch and
+`/resume`, and one summary after each window (probes, HYPE spent, least funding left). The same alert is never sent twice within
+`alerts.repeatMinutes` (60). Every message passes the redactor. `POST /alert-test` sends a test message.
 
 Floors (`floorHype`) stop the run before a wallet is empty: 0.0003 HYPE for the keeper and quoters, 0.0004 for the sponsor.
 

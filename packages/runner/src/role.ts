@@ -1,7 +1,7 @@
 import type { PublicClient } from "viem";
 import type { RunnerWallet } from "@plumbline/shared";
 import { schedule } from "./config.js";
-import { Signer, makeClients } from "./chain.js";
+import { Signer, makeClients, takeFallbacks } from "./chain.js";
 import { accountFor, redactorFor, type Env } from "./env.js";
 import { errText, makeLogger, setRedactor, withFields, type Logger, safeJson } from "./core/log.js";
 import { cancelQuote, makerTick, newMakerState, type MakerState } from "./maker.js";
@@ -50,6 +50,7 @@ export class Role {
   private lastCheck = 0;
   private lastOk = 0;
   private backoffs = 0;
+  private lastFallbackTold = 0;
 
   constructor(
     private readonly state: DurableObjectState,
@@ -113,6 +114,25 @@ export class Role {
     if (cfg) await this.state.storage.put("cfg", { ...cfg, running: false } satisfies RoleConfig);
     await this.state.storage.deleteAlarm();
     this.log.warn("role ended", { role: cfg?.role ?? null, reason });
+    // A stop the supervisor asked for needs no message back: it knows.
+    if (cfg?.running && reason !== "stopped by the supervisor") await this.tell({ kind: "ended", role: cfg.role, reason, ...this.stats(cfg.role) });
+  }
+
+  /** The counters a window summary is made of. Numbers only. */
+  private stats(role: RoleName) {
+    return role === "keeper"
+      ? { probesSent: this.keeper.probesSent, probesLanded: this.keeper.probesLanded, probesReverted: this.keeper.probesReverted }
+      : { quotesSent: this.maker.sent, quotesFailed: this.maker.failed };
+  }
+
+  /** Tells the supervisor something worth an alert. It decides whether to send one; a miss is not retried. */
+  private async tell(event: Record<string, unknown>): Promise<void> {
+    try {
+      const stub = this.env.SUPERVISOR.get(this.env.SUPERVISOR.idFromName("main"));
+      await stub.fetch("https://supervisor/event", { method: "POST", body: JSON.stringify(event) });
+    } catch (err) {
+      this.log.warn("could not tell the supervisor", { err: errText(err) });
+    }
   }
 
   private makerCtx(role: "makerA" | "makerB") {
@@ -182,6 +202,11 @@ export class Role {
     } catch (err) {
       // A thrown error (a bad key, say) ends the run; it is never retried.
       return this.finish(`error: ${errText(err)}`);
+    }
+    // A read or send that had to leave the private node: say so, at most every five minutes.
+    if (takeFallbacks() > 0 && Date.now() - this.lastFallbackTold > 300_000) {
+      this.lastFallbackTold = Date.now();
+      await this.tell({ kind: "fallback", role: cfg.role });
     }
     await this.state.storage.setAlarm(Math.max(Date.now() + 50, next));
   }

@@ -20,6 +20,11 @@ export interface Env {
   ADMIN_TOKEN?: string;
   /** A private Conduit node URL with its API key in the path. Used first; the public nodes are the fallback. */
   CONDUIT_RPC_URL?: string;
+  /** The treasury wallet's key. It may only send HYPE to the addresses in bots.schedule.json. */
+  TREASURY_KEY?: string;
+  /** Telegram bot token and the chat id to alert (both set by the owner). */
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
 }
 
 /** Which secret holds which wallet's key. */
@@ -32,7 +37,7 @@ export const WALLET_SECRET: Record<RunnerWallet, keyof Env> = {
   makerB: "MAKER_B_KEY",
 };
 
-export const SECRET_NAMES = [...Object.values(WALLET_SECRET), "ADMIN_TOKEN", "CONDUIT_RPC_URL"] as const;
+export const SECRET_NAMES = [...Object.values(WALLET_SECRET), "ADMIN_TOKEN", "CONDUIT_RPC_URL", "TREASURY_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"] as const;
 
 /** Every secret value present, and the parts of a URL secret that carry its key, for the redactor. */
 export function secretValues(env: Env): string[] {
@@ -50,16 +55,17 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
  * message, if the secret is malformed, belongs to the deployer, or is not the address that
  * bots.schedule.json lists for this wallet (a key pasted into the wrong secret).
  */
-export function accountFor(env: Env, wallet: RunnerWallet, schedule: BotsSchedule): PrivateKeyAccount | null {
-  const name = WALLET_SECRET[wallet];
+export function accountFor(env: Env, wallet: RunnerWallet | "treasury", schedule: BotsSchedule): PrivateKeyAccount | null {
+  const name = wallet === "treasury" ? "TREASURY_KEY" : WALLET_SECRET[wallet];
   const raw = env[name];
   if (typeof raw !== "string" || raw === "") return null;
   const key = (raw.startsWith("0x") ? raw : `0x${raw}`).trim();
   if (!isHex(key) || key.length !== 66) throw new Error(`${name} is not a 32-byte hex private key`);
   const account = privateKeyToAccount(key as Hex);
   if (same(account.address, deployment.deployer)) throw new Error(`${name} is the deployer's key: the runner never uses it`);
-  const listed = schedule.wallets[wallet];
-  if (listed === null) throw new Error(`wallets.${wallet} is null in bots.schedule.json: set it to ${getAddress(account.address)}`);
-  if (!same(account.address, listed)) throw new Error(`${name} does not belong to wallets.${wallet} (${listed}): it is another wallet's key`);
+  const listed = wallet === "treasury" ? schedule.treasury.address : schedule.wallets[wallet];
+  const field = wallet === "treasury" ? "treasury.address" : `wallets.${wallet}`;
+  if (listed === null) throw new Error(`${field} is null in bots.schedule.json: set it to ${getAddress(account.address)}`);
+  if (!same(account.address, listed)) throw new Error(`${name} does not belong to ${field} (${listed}): it is another wallet's key`);
   return account;
 }

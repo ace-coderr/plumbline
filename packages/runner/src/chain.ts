@@ -29,14 +29,25 @@ export function makeClients(privateUrl?: string): PublicClient[] {
 /** Ask each node in turn until one answers; throws the last error if none does. */
 export async function tryEach<T>(clients: PublicClient[], fn: (c: PublicClient) => Promise<T>): Promise<T> {
   let last: unknown;
-  for (const c of clients) {
+  for (const [i, c] of clients.entries()) {
     try {
-      return await fn(c);
+      const r = await fn(c);
+      // With a private node first, an answer from a later node means the private one failed.
+      if (i > 0 && clients.length >= 3) fallbacks += 1;
+      return r;
     } catch (err) {
       last = err;
     }
   }
   throw last;
+}
+
+let fallbacks = 0;
+/** How many reads fell back from the private node to a public one since this was last asked. */
+export function takeFallbacks(): number {
+  const n = fallbacks;
+  fallbacks = 0;
+  return n;
 }
 
 const balanceAbi = parseAbi(["function getEthBalance(address) view returns (uint256)"]);
@@ -85,7 +96,12 @@ export class Signer {
     return this.account.address;
   }
 
-  async send(to: Address, data: Hex, gas: bigint): Promise<Hash> {
+  /** True once a send has moved this signer off its first node. */
+  get fellBack(): boolean {
+    return this.ix > 0;
+  }
+
+  async send(to: Address, data: Hex, gas: bigint, value = 0n): Promise<Hash> {
     if (this.nonce === null) this.nonce = await this.client.getTransactionCount({ address: this.account.address, blockTag: "pending" });
     if (Date.now() - this.feeAt > 30_000 || this.fee === 0n) {
       // Twice the current price: the fee only has to clear the base fee, and Elysium's is flat.
@@ -98,6 +114,7 @@ export class Signer {
       type: "eip1559",
       to,
       data,
+      value,
       nonce,
       gas,
       maxFeePerGas: this.fee,
@@ -115,8 +132,8 @@ export class Signer {
   }
 
   /** Send and wait for the receipt, polling a bounded number of times; throws unless it succeeded. */
-  async sendAndConfirm(to: Address, data: Hex, gas: bigint, waitMs = 15_000): Promise<TransactionReceipt> {
-    const hash = await this.send(to, data, gas);
+  async sendAndConfirm(to: Address, data: Hex, gas: bigint, waitMs = 15_000, value = 0n): Promise<TransactionReceipt> {
+    const hash = await this.send(to, data, gas, value);
     const until = Date.now() + waitMs;
     while (Date.now() < until) {
       await new Promise((r) => setTimeout(r, 800));

@@ -29,7 +29,7 @@ const supervisor = (env: Env) => env.SUPERVISOR.get(env.SUPERVISOR.idFromName("m
 export default {
   /**
    * Public: GET /health, the schedule and the supervisor's state (no secret in it).
-   * Admin, with `Authorization: Bearer <ADMIN_TOKEN>`: POST /kill, POST /resume, POST /tick.
+   * Admin, with `Authorization: Bearer <ADMIN_TOKEN>`: POST /kill, /resume, /tick, /alert-test, /topup-plan (a dry run), /topup-test?wallet=&hype= (one live transfer of at most 0.001 HYPE).
    * Nothing else is routed: the roles and the supervisor cannot be reached from outside.
    */
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -50,11 +50,11 @@ export default {
       if (edgeCache) await edgeCache.put(key, res.clone());
       return res;
     }
-    if (req.method === "POST" && ["/kill", "/resume", "/tick"].includes(url.pathname)) {
+    if (req.method === "POST" && ["/kill", "/resume", "/tick", "/alert-test", "/topup-plan", "/topup-test"].includes(url.pathname)) {
       if (!env.ADMIN_TOKEN) return json({ error: "admin actions are disabled: ADMIN_TOKEN is not set" }, 503);
       const given = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
       if (!sameSecret(given, env.ADMIN_TOKEN)) return json({ error: "unauthorised" }, 401);
-      return json(await (await supervisor(env).fetch(`https://supervisor${url.pathname}`, { method: "POST" })).json());
+      return json(await (await supervisor(env).fetch(`https://supervisor${url.pathname}${url.search}`, { method: "POST" })).json());
     }
     return json({ error: "not found" }, 404);
   },
