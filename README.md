@@ -17,6 +17,8 @@ browser reads the chain itself; wallet actions send real testnet transactions ·
 >   contract, but no outside maker has quoted, been probed or earned anything.
 > * The contracts are unaudited.
 
+**Running the automated bots?** See [docs/OPERATING.md](docs/OPERATING.md): funding, alerts, kill switch, schedule, key rotation, redeploying and setting it up on a new Cloudflare account. `pnpm check:all` tests the whole setup.
+
 <p align="center">
   <img src="apps/web/public/og-default.png" alt="plumbline" width="640" />
 </p>

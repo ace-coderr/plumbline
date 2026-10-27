@@ -4,6 +4,8 @@ Runs the keeper and the two maker bots on a schedule, on a free Cloudflare accou
 machine. It is deployed and **switched on** for one 4-hour window a day (13:00 UTC, 14:00 Lagos) with a daily spend cap of
 0.13 HYPE (`bots.schedule.json`). Set `"enabled": false` and deploy to stop it.
 
+Day-to-day operation, alerts, key rotation and new-account setup: [`docs/OPERATING.md`](../../docs/OPERATING.md).
+
 Why Cloudflare, with the measured numbers and the terms it was checked against: [`hosting-spike/README.md`](../../hosting-spike/README.md).
 
 ## How it works
@@ -101,7 +103,8 @@ domain, zone or route.
    stops all three bots (each cancels its quote) and keeps them stopped, across windows and restarts, until
    `POST /resume`. `GET /health` shows `"killed": true`.
 2. **At the source:** set `"enabled": false` in `bots.schedule.json`, commit, `npx wrangler deploy`.
-3. **Remove the trigger:** dashboard → `plumbline-runner` → Settings → Triggers → delete the cron.
+3. **Remove the trigger:** dashboard → `plumbline-runner` → Settings → Triggers → delete the cron. This only stops future windows from
+   starting; a window already running carries on until it ends (use 1 to stop it now).
 4. **Remove everything:** `npx wrangler delete`.
 5. If a key may have leaked: move the wallet's funds out and stop using it; the runner holds nothing else worth taking.
 
