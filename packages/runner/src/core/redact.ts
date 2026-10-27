@@ -20,6 +20,8 @@ export function expandSecrets(values: readonly string[]): string[] {
       // not URI-encoded
     }
     out.add(encodeURIComponent(v));
+    // A Telegram bot token is `<id>:<secret>`; either half may be printed alone.
+    if (/^\d+:[\w-]+$/.test(v)) for (const half of v.split(":")) out.add(half);
     try {
       const u = new URL(v);
       for (const part of [u.pathname, u.pathname.slice(1), u.search, u.search.slice(1), u.username, u.password, u.href, u.href.replace(/\/$/, "")]) out.add(part);
