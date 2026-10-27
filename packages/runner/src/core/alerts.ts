@@ -72,6 +72,8 @@ export const msg = {
     worst: string;
     treasuryWei: bigint;
     restarts: number[];
+    /** The Health block (core/health.ts formatHealth), shown last. */
+    health: string;
   }) => {
     const w = s.window;
     const head = w
@@ -81,7 +83,10 @@ export const msg = {
     if (w?.mismatch) lines.push("Check: landed does not equal sent minus reverted, so some probe is unaccounted for.");
     if (s.restarts.length) lines.push(`The keeper restarted ${s.restarts.length} time(s) in the window, at ${s.restarts.map((t) => new Date(t * 1000).toISOString().slice(11, 19)).join(", ")} UTC.`);
     lines.push(`HYPE spent today (the whole UTC day so far, all six runner wallets, by balance change): ${hype(s.dayWei)}. Least funding left: ${s.worst}, ${s.minDays.toFixed(1)} days. Treasury ${hype(s.treasuryWei)} HYPE.`);
+    lines.push(s.health);
     return lines.join("\n");
   },
+  healthFailed: (failed: { name: string; detail: string }[]) =>
+    `Plumbline runner: ${failed.length} health check(s) failed after the window.\n${failed.map((f) => `- ${f.name}: ${f.detail}`).join("\n")}`,
   keeperRestarted: (atSec: number, role: string) => `Plumbline runner: the ${role} bot restarted mid-window at ${new Date(atSec * 1000).toISOString().slice(11, 19)} UTC. Its counters were kept.`,
 };

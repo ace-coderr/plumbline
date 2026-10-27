@@ -3,6 +3,7 @@ import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbl
 import { CAMPAIGNS, FAUCET, PLUMBUSD, schedule } from "./config.js";
 import { fetchWindowFigures } from "./windowData.js";
 import { windowLabel } from "./core/windowSummary.js";
+import { formatHealth, plumbusdLines, rpcLines, runnerLines, treasuryLine, walletLines, windowLines, type NodeResult } from "./core/health.js";
 import { makeClients, readBalances, takeFallbacks, tryEach } from "./chain.js";
 import { ensureCampaign } from "./campaign.js";
 import { redactorFor, type Env } from "./env.js";
@@ -230,8 +231,27 @@ export class Supervisor {
         const d = daysLeft(schedule, w, balances[w]);
         if (d < minDays) [minDays, worst] = [d, w];
       }
-      const treasuryWei = (await treasuryBalance({ clients, schedule })) ?? 0n;
+      const treasuryRead = await treasuryBalance({ clients, schedule });
+      const treasuryWei = treasuryRead ?? 0n;
       const f = chainRes.ok ? chainRes.figures : null;
+      // The health block reuses what this summary has just read (balances, treasury, the window's figures) and adds
+      // five cheap reads: each node's block number and the two PLUMBUSD balances.
+      const [nodes, plum, halt, lastTickAt, killed] = await Promise.all([
+        this.probeNodes(clients),
+        this.readPlumbusd(clients),
+        this.get<Halt>("halt"),
+        this.get<number>("lastTickAt"),
+        this.get<boolean>("killed"),
+      ]);
+      const health = [
+        ...rpcLines(nodes),
+        ...runnerLines({ nowSec: Math.floor(Date.now() / 1000), lastTickAt: lastTickAt ?? null, killed: killed ?? false, halt: halt ? { kind: halt.kind, reason: halt.reason } : null, scheduleEnabled: schedule.enabled }),
+        ...walletLines(schedule, balances),
+        treasuryLine(schedule, treasuryRead),
+        ...plumbusdLines(schedule, plum.held, plum.pool, FAUCET !== null),
+        ...windowLines(f, saved ? { sent: saved.keeper.probesSent, landed: saved.keeper.probesLanded, reverted: saved.keeper.probesReverted } : null, chainRes.ok ? undefined : chainRes.reason),
+      ];
+      const formatted = formatHealth(health);
       await this.alert(
         `summary:${due.start}`,
         msg.summary({
@@ -243,8 +263,11 @@ export class Supervisor {
           worst,
           treasuryWei,
           restarts: saved?.restarts ?? [],
+          health: formatted.text,
         }),
       );
+      // Anything failing also gets its own alert, so it is not buried in the daily message.
+      if (formatted.failed.length) await this.alert("health-fail", msg.healthFailed(formatted.failed));
       await this.state.storage.put("lastSummary", { window: due.start, at: Math.floor(Date.now() / 1000), figures: f && { ...f, gasUsedTotal: f.gasUsedTotal.toString(), gasWei: f.gasWei.toString(), revertedGasUsed: f.revertedGasUsed.toString(), revertedGasWei: f.revertedGasWei.toString() } });
     } catch (err) {
       this.log.warn("summary not sent", { err: errText(err) });
@@ -318,19 +341,41 @@ export class Supervisor {
     }
   }
 
+  /** Whole PLUMBUSD at the faucet pool and the sponsor wallet, two reads; null for one that cannot be read or is not set. */
+  private async readPlumbusd(clients: PublicClient[]): Promise<{ pool: number | null; held: number | null }> {
+    const sponsor = schedule.wallets.sponsor;
+    const unit = 10 ** PLUMBUSD.decimals;
+    const read = (who: NonNullable<typeof sponsor>) =>
+      tryEach(clients, (c) => c.readContract({ address: PLUMBUSD.address, abi: erc20Abi, functionName: "balanceOf", args: [who] })).then((n) => Number(n) / unit, () => null);
+    const [pool, held] = await Promise.all([FAUCET ? read(FAUCET) : Promise.resolve(null), sponsor ? read(sponsor) : Promise.resolve(null)]);
+    return { pool, held };
+  }
+
+  /** Asks each node once for its block number: whether each answers, never what its URL is. */
+  private async probeNodes(clients: PublicClient[]): Promise<NodeResult[]> {
+    const names = clients.length >= 3 ? ["private node", "public node (Elysium)", "public node (Conduit)"] : ["public node (Elysium)", "public node (Conduit)"];
+    return Promise.all(
+      clients.map(async (c, i): Promise<NodeResult> => {
+        const t0 = Date.now();
+        try {
+          const block = await c.getBlockNumber();
+          return { name: names[i] ?? `node ${i + 1}`, ok: true, detail: `block ${block}, ${Date.now() - t0} ms` };
+        } catch (err) {
+          return { name: names[i] ?? `node ${i + 1}`, ok: false, detail: errText(err).slice(0, 80) };
+        }
+      }),
+    );
+  }
+
   /** Twice an hour, in or out of a window: PLUMBUSD at the faucet pool and the sponsor, alerting when either runs low. */
   private async checkPlumbusd(now: number): Promise<void> {
     if (now - ((await this.get<number>("plumbusdCheckedAt")) ?? 0) < 1800) return;
     await this.state.storage.put("plumbusdCheckedAt", now);
-    const sponsor = schedule.wallets.sponsor;
-    if (!sponsor) return;
+    if (!schedule.wallets.sponsor) return;
     try {
-      const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
-      const read = (who: typeof sponsor) => tryEach(clients, (c) => c.readContract({ address: PLUMBUSD.address, abi: erc20Abi, functionName: "balanceOf", args: [who] }));
-      const [pool, held] = await Promise.all([FAUCET ? read(FAUCET) : Promise.resolve(null), read(sponsor)]);
-      const unit = 10 ** PLUMBUSD.decimals;
-      if (pool !== null && Number(pool) / unit < schedule.alerts.faucetLowPlumbusd) await this.alert("faucet-low", msg.faucetLow(Number(pool) / unit, schedule.alerts.faucetLowPlumbusd));
-      if (Number(held) / unit < schedule.alerts.sponsorLowPlumbusd) await this.alert("sponsor-low", msg.sponsorLow(Number(held) / unit, schedule.alerts.sponsorLowPlumbusd));
+      const { pool, held } = await this.readPlumbusd((this.clients ??= makeClients(this.env.CONDUIT_RPC_URL)));
+      if (pool !== null && pool < schedule.alerts.faucetLowPlumbusd) await this.alert("faucet-low", msg.faucetLow(pool, schedule.alerts.faucetLowPlumbusd));
+      if (held !== null && held < schedule.alerts.sponsorLowPlumbusd) await this.alert("sponsor-low", msg.sponsorLow(held, schedule.alerts.sponsorLowPlumbusd));
     } catch (err) {
       this.log.warn("PLUMBUSD balances not readable", { err: errText(err) });
     }
