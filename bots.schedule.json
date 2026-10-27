@@ -37,5 +37,16 @@
     "A": { "spreadBps": 12, "size": "0.0008", "skewBps": 4, "refreshMs": 1000 },
     "B": { "spreadBps": 24, "size": "0.0006", "skewBps": 4, "refreshMs": 1000 }
   },
-  "referenceCoin": "HYPE"
+  "referenceCoin": "HYPE",
+  "treasury": { "address": "0x937c183e5f05164dbfaac4cE8D9464c7cA5D4755", "lowAlertHype": 0.5, "minHype": 0.01 },
+  "topUp": {
+    "enabled": true,
+    "checkEveryMinutes": 30,
+    "belowDays": 3,
+    "toDays": 10,
+    "dailySpendHype": { "keeper": 0.016, "quoterA": 0.055, "quoterB": 0.055, "sponsor": 0.0008, "makerA": 0.0001, "makerB": 0.0001 },
+    "perWalletPerDayHype": 1.0,
+    "totalPerDayHype": 2.0
+  },
+  "alerts": { "repeatMinutes": 60 }
 }

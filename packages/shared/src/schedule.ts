@@ -25,6 +25,32 @@ export interface MakerSettings {
   refreshMs: number;
 }
 
+/** Where top-ups come from and when to warn that it is running dry. */
+export interface TreasurySettings {
+  /** Public address of the treasury wallet; null until it has been created. */
+  address: Address | null;
+  /** Warn (status page, Telegram) when it holds less than this, in HYPE. */
+  lowAlertHype: number;
+  /** Stop topping up when it holds less than this, in HYPE: what is left pays for the transfers themselves. */
+  minHype: number;
+}
+
+export interface TopUpSettings {
+  enabled: boolean;
+  /** How often during a window the wallets are checked, besides at the window's start. */
+  checkEveryMinutes: number;
+  /** A wallet holding less than this many days of spend gets a top-up. */
+  belowDays: number;
+  /** ...up to this many days of spend. */
+  toDays: number;
+  /** Measured daily spend of each wallet over a full window, in HYPE: what "days" means. */
+  dailySpendHype: Record<RunnerWallet, number>;
+  /** Most HYPE one wallet may receive in a UTC day. */
+  perWalletPerDayHype: number;
+  /** Most HYPE the treasury may send in a UTC day, in all. */
+  totalPerDayHype: number;
+}
+
 export interface BotsSchedule {
   /** The master switch. False: nothing runs, whatever the windows say. */
   enabled: boolean;
@@ -50,6 +76,9 @@ export interface BotsSchedule {
   };
   maker: { A: MakerSettings; B: MakerSettings };
   referenceCoin: string;
+  treasury: TreasurySettings;
+  topUp: TopUpSettings;
+  alerts: { /** The same alert is not sent again within this many minutes. */ repeatMinutes: number };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -88,7 +117,7 @@ function parseMaker(v: unknown, where: string): MakerSettings {
 /** Validate a parsed bots.schedule.json. Strict: an unknown or missing field is an error, never ignored. */
 export function parseSchedule(raw: unknown): BotsSchedule {
   if (!isObj(raw)) throw new Error("schedule: must be an object");
-  only(raw, ["enabled", "windows", "dailyHypeCap", "floorHype", "wallets", "vaults", "campaign", "maker", "referenceCoin"], "schedule");
+  only(raw, ["enabled", "windows", "dailyHypeCap", "floorHype", "wallets", "vaults", "campaign", "maker", "referenceCoin", "treasury", "topUp", "alerts"], "schedule");
   if (typeof raw.enabled !== "boolean") throw new Error("schedule.enabled: must be true or false");
   if (!Array.isArray(raw.windows) || raw.windows.length > 6) throw new Error("schedule.windows: must be a list of at most 6");
   const windows = raw.windows.map((w, i): ScheduleWindow => {
@@ -131,6 +160,21 @@ export function parseSchedule(raw: unknown): BotsSchedule {
   if (!isObj(raw.maker)) throw new Error("schedule.maker: must be an object");
   only(raw.maker, ["A", "B"], "schedule.maker");
   if (typeof raw.referenceCoin !== "string" || !/^[A-Z0-9]{2,10}$/.test(raw.referenceCoin)) throw new Error("schedule.referenceCoin: must be a coin symbol");
+  if (!isObj(raw.treasury)) throw new Error("schedule.treasury: must be an object");
+  only(raw.treasury, ["address", "lowAlertHype", "minHype"], "schedule.treasury");
+  if (!isObj(raw.topUp)) throw new Error("schedule.topUp: must be an object");
+  const tu = raw.topUp;
+  only(tu, ["enabled", "checkEveryMinutes", "belowDays", "toDays", "dailySpendHype", "perWalletPerDayHype", "totalPerDayHype"], "schedule.topUp");
+  if (typeof tu.enabled !== "boolean") throw new Error("schedule.topUp.enabled: must be true or false");
+  if (!isObj(tu.dailySpendHype)) throw new Error("schedule.topUp.dailySpendHype: must be an object");
+  only(tu.dailySpendHype, RUNNER_WALLETS, "schedule.topUp.dailySpendHype");
+  const dailySpendHype = {} as Record<RunnerWallet, number>;
+  for (const w of RUNNER_WALLETS) dailySpendHype[w] = num((tu.dailySpendHype as Record<string, unknown>)[w], `schedule.topUp.dailySpendHype.${w}`, 0.000001, 5);
+  const belowDays = num(tu.belowDays, "schedule.topUp.belowDays", 0.5, 60);
+  const toDays = num(tu.toDays, "schedule.topUp.toDays", 1, 120);
+  if (toDays <= belowDays) throw new Error("schedule.topUp.toDays: must be more than belowDays");
+  if (!isObj(raw.alerts)) throw new Error("schedule.alerts: must be an object");
+  only(raw.alerts, ["repeatMinutes"], "schedule.alerts");
   return {
     enabled: raw.enabled,
     windows,
@@ -151,6 +195,21 @@ export function parseSchedule(raw: unknown): BotsSchedule {
     },
     maker: { A: parseMaker(raw.maker.A, "schedule.maker.A"), B: parseMaker(raw.maker.B, "schedule.maker.B") },
     referenceCoin: raw.referenceCoin,
+    treasury: {
+      address: raw.treasury.address === null ? null : addr(raw.treasury.address, "schedule.treasury.address"),
+      lowAlertHype: num(raw.treasury.lowAlertHype, "schedule.treasury.lowAlertHype", 0, 1000),
+      minHype: num(raw.treasury.minHype, "schedule.treasury.minHype", 0, 1000),
+    },
+    topUp: {
+      enabled: tu.enabled,
+      checkEveryMinutes: num(tu.checkEveryMinutes, "schedule.topUp.checkEveryMinutes", 5, 240),
+      belowDays,
+      toDays,
+      dailySpendHype,
+      perWalletPerDayHype: num(tu.perWalletPerDayHype, "schedule.topUp.perWalletPerDayHype", 0, 100),
+      totalPerDayHype: num(tu.totalPerDayHype, "schedule.topUp.totalPerDayHype", 0, 1000),
+    },
+    alerts: { repeatMinutes: num(raw.alerts.repeatMinutes, "schedule.alerts.repeatMinutes", 1, 1440) },
   };
 }
 
