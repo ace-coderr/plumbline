@@ -34,7 +34,7 @@ pnpm check:all
 
 It prints `PASS` or `FAIL` for each line: the three RPC nodes, the runner's last tick, the kill switch, any halt, the Telegram
 secrets, a test message to your Telegram (add `--skip-telegram` to leave that out), every wallet against its floor, the treasury, the
-PLUMBUSD balances, and the last window's summary against the chain.
+PLUMBUSD balances, the heartbeat (`SKIP` if you have not set one up), and the last window's summary against the chain.
 
 If it ends with `All checks passed.` you are done. If a line fails, find it below:
 
@@ -49,6 +49,7 @@ If it ends with `All checks passed.` you are done. If a line fails, find it belo
 | `wallet ...` under floor | Fund that wallet or let the treasury do it: [section 2](#2-fund-the-treasury). |
 | `treasury` | Fund it: [section 2](#2-fund-the-treasury). |
 | `sponsor PLUMBUSD` / `faucet pool PLUMBUSD` | Mint more PLUMBUSD: [section 3](#plumbusd-low). |
+| `heartbeat` | The last ping to your monitoring service failed. | See [section 10](#10-the-heartbeat-optional). |
 | `last window summary sent` | The runner has not posted the summary for the last finished window. Normal right after a fresh deploy until the next window has ended; otherwise look at the Worker logs ([section 3](#where-to-see-the-logs)). |
 
 ### Find your runner's address
@@ -106,6 +107,7 @@ Every message starts with "Plumbline runner:". Alerts go only to your chat. The 
 | `Health: all checks passed` / `Health: N failed` (the last lines of the daily summary) | The same checks as `pnpm check:all`, run a minute after each window: RPC nodes, the runner's own state, every wallet against its floor, the treasury, the sponsor and faucet PLUMBUSD, and the window figures against the chain. Passing groups show one `PASS` line; a failure shows its own `FAIL` line. | Act on each `FAIL` line using the table in [section 1](#1-is-everything-healthy-start-here). |
 | `N health check(s) failed after the window` | A separate message, sent only when something in the Health block failed (once an hour at most), so it is not missed inside the daily summary. | Same as above. |
 | `error in <bot> (<what>, <kind>): <short text>` | A failed send, call or uncaught exception, for example `keeper (probe send, Revert)`. One message per kind of error per hour; a later one says `(N similar error(s) since the last alert)`. At most 20 a hour; after that one notice says so and the rest are only logged. URLs, keys and tokens are removed. | One-off reverted probes are normal (the gate is only open about a second). Act if it repeats every hour: check the Worker logs, the node ([above](#the-private-node-failed)) and the balances. |
+| `error in supervisor (heartbeat ping, ...)` | The runner could not reach your heartbeat monitor. It is not a problem with the bots; it only means the monitor may soon think the runner is down. | See [section 10](#10-the-heartbeat-optional). |
 | `the window 13:00–17:00 UTC ended over 30 minutes ago and no summary was saved` | The daily summary did not happen. The message says if the kill switch is on or the runner is halted; otherwise the bots may not have run at all. | Run `pnpm check:all`, read the Worker logs, and fix what it shows. The next window runs as normal. |
 | `(N earlier alert(s) could not be sent; the last at ...)` (added to a message) | Telegram was unreachable for some earlier alerts. They are counted, shown as `alertFailures` in the runner's `/health`, and reported here once a message gets through. | Usually nothing. If it keeps appearing, check the Telegram secrets ([section 7](#telegram-bot-token-and-chat-id)). |
 | `test alert` | You (or `check:all`) asked for a test. | Nothing. |
@@ -226,6 +228,7 @@ Per secret:
 | `CONDUIT_RPC_URL` | Browser: Conduit dashboard (app.conduit.xyz) → your Elysium testnet node → create or regenerate the key, copy the new URL straight into `.env`. Then `pnpm runner put-secrets CONDUIT_RPC_URL`. |
 | `TELEGRAM_BOT_TOKEN` | Browser/Telegram: message @BotFather → `/revoke` (or `/token`) → choose your bot → copy the new token straight into `.env`. Then `pnpm runner put-secrets TELEGRAM_BOT_TOKEN`. |
 | `TELEGRAM_CHAT_ID` | Only changes if you change the account that receives alerts. See below. |
+| `HEALTHCHECK_URL` | In the monitoring service's dashboard make a new ping address (or regenerate the old one), then follow [section 10](#10-the-heartbeat-optional). |
 | Deployer | Never on Cloudflare. If it leaks, make a new deployer wallet and redeploy contracts: a project decision. |
 
 ### Telegram bot token and chat id
@@ -309,6 +312,7 @@ Names only. **Cloudflare secret** = set on the Worker (dashboard → `plumbline-
 | `CONDUIT_RPC_URL` | Private RPC node URL (the key is in the URL) | Cloudflare secret; `.env` | Section 7, Conduit dashboard |
 | `TELEGRAM_BOT_TOKEN` | Your alert bot | Cloudflare secret; `.env` | @BotFather, section 7 |
 | `TELEGRAM_CHAT_ID` | Your Telegram chat | Cloudflare secret; `.env` | `pnpm runner find-chat-id` |
+| `HEALTHCHECK_URL` | Optional. A heartbeat monitor's ping address ([section 10](#10-the-heartbeat-optional)) | Cloudflare secret; `.env` | Section 10 |
 | `DEPLOYER_PRIVATE_KEY` | Deploys contracts, mints PLUMBUSD | **`.env` only. Never on Cloudflare.** | New wallet; project decision |
 | `RUNNER_URL` | Your runner's address | `.env` only (used by `pnpm check:all` and `pnpm runner`) | [Find your runner's address](#find-your-runners-address) |
 | `CLOUDFLARE_ACCOUNT_ID` | Which Cloudflare account to deploy to (only if you have several) | Your terminal or `.env`; not secret | Dashboard → Workers & Pages → Overview |
@@ -325,3 +329,34 @@ Settings that are not secret, all in the repository:
 **Where the runner keeps its own memory.** Cloudflare Durable Object storage inside your account: the kill switch, halts, the day's
 starting balances, the top-up history and daily totals, alert timing, and the keeper's counters for the current window. Nothing is kept
 on your computer.
+
+---
+
+## 10. The heartbeat (optional)
+
+**What it is.** The runner can "check in" with a free monitoring service (for example healthchecks.io, Better Stack or Uptime Kuma). The
+service gives you a private web address. Every 5 minutes, the runner opens that address once. If the runner stops checking in, the
+service notices the silence and tells you (by email or its own Telegram link). It covers what the runner cannot report itself: the
+whole Worker being stopped, deleted or broken.
+
+**When it pings, and when it does not.** It pings every 5 minutes, whether or not a bot window is open, but **only while the runner is
+healthy**: its last tick was recent, the kill switch is off, and no halt is in force. If any of those is wrong the ping is skipped on
+purpose, so the monitor's silence is the alarm. With no address set it does nothing at all and sends no alert.
+
+**What it never does.** The address is a secret: it is never written to a log, a Telegram message, the `/health` page or any file in
+the project. If a ping fails (the service is down or slow), that is counted and reported like any other error, once an hour at most
+(`error in supervisor (heartbeat ping, ...)`); it never stops the bots. One attempt, a 5-second limit, no retries.
+
+**Set it up (browser, then terminal).**
+
+1. Browser: sign up at a heartbeat monitoring service and create a check with a period of 5 minutes and a grace time of about 10
+   minutes. Copy its ping address, but do not paste it into a chat.
+2. Terminal tab, in the project folder: `pnpm runner set-env HEALTHCHECK_URL`. It asks for the address with hidden input (nothing shows
+   as you paste) and saves it to `.env`.
+3. `pnpm runner put-secrets HEALTHCHECK_URL` sends it to Cloudflare.
+4. Wait about 5 minutes, then `pnpm check:all --skip-telegram`: the `heartbeat` line should say `PASS`. The monitoring service's
+   dashboard should show the check as up.
+
+**Rotate it.** In the service, create a new ping address (or regenerate the old one) and retire the old one. Delete the
+`HEALTHCHECK_URL=` line in `.env`, then repeat steps 2 and 3. To switch the heartbeat off, delete the secret in the dashboard
+(Workers & Pages, `plumbline-runner`, Settings, Variables and Secrets) and the line in `.env`.
