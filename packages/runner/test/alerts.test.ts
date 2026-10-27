@@ -8,6 +8,7 @@ import { redactorFor, secretValues, SECRET_NAMES, type Env } from "../src/env.js
 import { gate, msg, prune, sendTelegram } from "../src/core/alerts.js";
 import { errText, makeLogger, safeJson, setRedactor } from "../src/core/log.js";
 import worker from "../src/index.js";
+import { schedule } from "../src/config.js";
 
 const hex = (n: number) => randomBytes(n).toString("hex");
 const secrets = () => ({
@@ -174,6 +175,36 @@ describe("alerts through the supervisor", () => {
     assert.ok(!bad.includes(s.TELEGRAM_BOT_TOKEN) && !bad.includes(s.TELEGRAM_BOT_TOKEN.split(":")[1]!));
   });
 
+  it("low PLUMBUSD at the faucet or the sponsor alerts once an hour; healthy balances do not", async () => {
+    Date.now = () => Date.parse("2026-10-27T03:00:00Z");
+    const s = secrets();
+    const balances = { faucet: 19_999_000_000n, sponsor: 1_999_000_000n };
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).startsWith("https://api.telegram.org/")) {
+        telegram.push(JSON.parse(String(init?.body)));
+        return Response.json({ jsonrpc: "2.0", ok: true });
+      }
+      const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: { data?: string }[] };
+      if (body.method !== "eth_call") return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "no" } });
+      const arg = String(body.params[0]?.data ?? "").toLowerCase();
+      const v = arg.includes(schedule.wallets.sponsor!.slice(2).toLowerCase()) ? balances.sponsor : balances.faucet;
+      return Response.json({ jsonrpc: "2.0", id: body.id, result: `0x${v.toString(16).padStart(64, "0")}` });
+    }) as typeof fetch;
+    const { sup, m } = harness(s);
+    await sup.tick();
+    assert.equal(telegram.filter((t) => /faucet pool holds 19,999/.test(t.text)).length, 1);
+    assert.equal(telegram.filter((t) => /sponsor wallet holds 1,999/.test(t.text)).length, 1);
+    m.set("plumbusdCheckedAt", 0);
+    await sup.tick();
+    assert.equal(telegram.length, 2, "the same alerts are not repeated inside the hour");
+    telegram = [];
+    balances.faucet = 500_000_000_000n;
+    balances.sponsor = 501_000_000_000n;
+    const fresh = harness(secrets());
+    await fresh.sup.tick();
+    assert.equal(telegram.length, 0);
+  });
+
   it("two ticks at once run one: the second never touches the chain", async () => {
     Date.now = () => Date.parse("2026-10-27T13:30:00Z");
     const s = secrets();
@@ -230,7 +261,7 @@ describe("secrets never leave in any response", () => {
     const s = secrets();
     const { full } = harness(s);
     for (const path of ["/kill", "/resume", "/tick", "/alert-test", "/topup-plan", "/topup-test?wallet=keeper&hype=0.0001"]) {
-      for (const headers of [{}, { authorization: "Bearer nope" }]) {
+      for (const headers of [{} as Record<string, string>, { authorization: "Bearer nope" }]) {
         const res = await worker.fetch(new Request(`https://runner${path}`, { method: "POST", headers }), full);
         assert.equal(res.status, 401, path);
       }

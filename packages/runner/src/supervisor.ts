@@ -1,6 +1,6 @@
-import type { PublicClient } from "viem";
+import { erc20Abi, type PublicClient } from "viem";
 import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbline/shared";
-import { schedule } from "./config.js";
+import { FAUCET, PLUMBUSD, schedule } from "./config.js";
 import { makeClients, readBalances, takeFallbacks, tryEach } from "./chain.js";
 import { ensureCampaign } from "./campaign.js";
 import { redactorFor, type Env } from "./env.js";
@@ -292,9 +292,28 @@ export class Supervisor {
     }
   }
 
+  /** Twice an hour, in or out of a window: PLUMBUSD at the faucet pool and the sponsor, alerting when either runs low. */
+  private async checkPlumbusd(now: number): Promise<void> {
+    if (now - ((await this.get<number>("plumbusdCheckedAt")) ?? 0) < 1800) return;
+    await this.state.storage.put("plumbusdCheckedAt", now);
+    const sponsor = schedule.wallets.sponsor;
+    if (!sponsor) return;
+    try {
+      const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
+      const read = (who: typeof sponsor) => tryEach(clients, (c) => c.readContract({ address: PLUMBUSD.address, abi: erc20Abi, functionName: "balanceOf", args: [who] }));
+      const [pool, held] = await Promise.all([FAUCET ? read(FAUCET) : Promise.resolve(null), read(sponsor)]);
+      const unit = 10 ** PLUMBUSD.decimals;
+      if (pool !== null && Number(pool) / unit < schedule.alerts.faucetLowPlumbusd) await this.alert("faucet-low", msg.faucetLow(Number(pool) / unit, schedule.alerts.faucetLowPlumbusd));
+      if (Number(held) / unit < schedule.alerts.sponsorLowPlumbusd) await this.alert("sponsor-low", msg.sponsorLow(Number(held) / unit, schedule.alerts.sponsorLowPlumbusd));
+    } catch (err) {
+      this.log.warn("PLUMBUSD balances not readable", { err: errText(err) });
+    }
+  }
+
   private async tickOnce(): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
     await this.state.storage.put("lastTickAt", now);
+    await this.checkPlumbusd(now);
     const killed = (await this.get<boolean>("killed")) ?? false;
     // Nothing to do (switched off, killed, or outside a window): answer without a single network call.
     const quick = decide({ schedule, nowSec: now, killed, halt: null, balances: null, dayStart: null });

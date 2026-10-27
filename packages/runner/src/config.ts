@@ -1,4 +1,4 @@
-import { deployment, currentSource, parseSchedule, type Address } from "@plumbline/shared";
+import { deployment, currentSource, faucetDeployment, parseSchedule, type Address } from "@plumbline/shared";
 import raw from "../../../bots.schedule.json" with { type: "json" };
 
 /**
@@ -11,6 +11,7 @@ export const schedule = parseSchedule(raw);
 export const CAMPAIGNS: Address = currentSource.campaigns;
 export const WHYPE = deployment.tokens.WHYPE;
 export const PLUMBUSD = (deployment.demoTokens as Record<string, { address: Address; decimals: number }>).PLUMBUSD as { address: Address; decimals: number };
+export const FAUCET: Address | null = faucetDeployment?.address ?? null;
 export const HL_INFO_URL = "https://api.hyperliquid-testnet.xyz/info";
 
 /** A quote is stale after this many ms without a fresh reference price, and gets cancelled. */

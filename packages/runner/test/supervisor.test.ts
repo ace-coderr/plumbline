@@ -60,6 +60,8 @@ describe("supervisor as shipped, outside its window", () => {
 
   it("a tick makes no network call and starts nothing", async () => {
     const st = fakeState();
+    // The twice-an-hour PLUMBUSD check is covered in alerts.test.ts; here it is marked as just done.
+    st.map.set("plumbusdCheckedAt", Math.floor(Date.now() / 1000));
     const { env, calls } = fakeEnv();
     const s = new Supervisor(st as never, env);
     await s.tick();
@@ -72,6 +74,8 @@ describe("supervisor as shipped, outside its window", () => {
 
   it("the kill switch stops every role, persists, and answers should-run with no", async () => {
     const st = fakeState();
+    // The twice-an-hour PLUMBUSD check is covered in alerts.test.ts; here it is marked as just done.
+    st.map.set("plumbusdCheckedAt", Math.floor(Date.now() / 1000));
     const { env, calls } = fakeEnv();
     const s = new Supervisor(st as never, env);
     const r = await s.fetch(new Request("https://supervisor/kill", { method: "POST" }));
@@ -88,6 +92,8 @@ describe("supervisor as shipped, outside its window", () => {
 
   it("reports its state without any secret", async () => {
     const st = fakeState();
+    // The twice-an-hour PLUMBUSD check is covered in alerts.test.ts; here it is marked as just done.
+    st.map.set("plumbusdCheckedAt", Math.floor(Date.now() / 1000));
     const { env } = fakeEnv();
     const body = JSON.stringify(await (await new Supervisor(st as never, env).fetch(new Request("https://supervisor/state"))).json());
     assert.ok(!body.includes("\"t\""), "no admin token in the report");

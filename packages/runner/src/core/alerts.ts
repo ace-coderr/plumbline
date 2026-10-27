@@ -58,6 +58,8 @@ export const msg = {
   rpcFallback: () => `Plumbline runner: the private RPC node failed; the runner is using the public nodes, which rate-limit.`,
   kill: () => `Plumbline runner: the kill switch was used. All bots are stopped until /resume.`,
   resumed: () => `Plumbline runner: /resume was used. The kill switch is off.`,
+  faucetLow: (plumbusd: number, lowAt: number) => `Plumbline runner: the faucet pool holds ${Math.floor(plumbusd).toLocaleString("en-US")} PLUMBUSD, under ${lowAt.toLocaleString("en-US")}. Mint more from the deployer.`,
+  sponsorLow: (plumbusd: number, lowAt: number) => `Plumbline runner: the sponsor wallet holds ${Math.floor(plumbusd).toLocaleString("en-US")} PLUMBUSD, under ${lowAt.toLocaleString("en-US")}. Mint more from the deployer.`,
   test: () => `Plumbline runner: test alert. If you can read this, alerts work.`,
   summary: (s: { probesLanded: number; probesSent: number; probesReverted: number; spentWei: bigint; minDays: number; worst: string; treasuryWei: bigint }) =>
     `Plumbline runner, window done: ${s.probesLanded} probes landed (${s.probesSent} sent, ${s.probesReverted} reverted), ${hype(s.spentWei)} HYPE spent. Least funding left: ${s.worst}, ${s.minDays.toFixed(1)} days. Treasury ${hype(s.treasuryWei)} HYPE.`,
