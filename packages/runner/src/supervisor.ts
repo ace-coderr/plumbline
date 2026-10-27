@@ -151,6 +151,7 @@ export class Supervisor {
       window: w,
       nextWindow: next,
       lastDecision: (await this.get<unknown>("lastDecision")) ?? null,
+      lastSummary: (await this.get<unknown>("lastSummary")) ?? null,
       treasury: {
         address: schedule.treasury.address,
         topUpsOn: schedule.topUp.enabled,
