@@ -90,6 +90,8 @@ export interface KeeperCtx {
   clients: PublicClient[];
   state: KeeperState;
   log: Logger;
+  /** Tells the supervisor about a failed call or send (it dedupes and rate-limits). */
+  report?: (context: string, err: unknown) => void;
 }
 
 const BURST_MS = 3_500;
@@ -147,6 +149,8 @@ async function settlePending(c: KeeperCtx): Promise<number> {
     const r = await tryEach(c.clients, (cl) => cl.getTransactionReceipt({ hash: p.hash })).catch(() => null);
     if (!r) {
       if (Date.now() - p.at < 20_000) keep.push(p);
+      // Given up on: it stays uncounted here, but the window summary reads the chain, so nothing is lost from it.
+      else c.log.warn("no receipt for a probe after 20 s, no longer waiting", { id: p.id, tx: shortHash(p.hash) });
       continue;
     }
     if (r.status === "success") c.state.probesLanded += 1;
@@ -181,6 +185,7 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
           st.sendsFailed += 1;
           st.lastError = errText(err);
           c.log.warn("settle failed", { id: due.id, err: st.lastError });
+          c.report?.("settle send", err);
         }
       }
     }
@@ -207,8 +212,9 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
             allowFailure: true,
             contracts: targets.map((t) => ({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "probeGateOpen", args: [BigInt(t.id)] }) as const),
           })
-          .catch(() => {
+          .catch((err) => {
             st.coolUntil[idx] = Date.now() + 3_000;
+            c.report?.("gate poll", err);
             return null;
           });
         used += 1;
@@ -237,6 +243,7 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
           st.sendsFailed += 1;
           st.lastError = errText(err);
           c.log.warn("probe send failed", { id, err: st.lastError });
+          c.report?.("probe send", err);
         }
       }
     }
@@ -244,5 +251,6 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
     st.failed += 1;
     st.lastError = errText(err);
     c.log.warn("keeper burst failed", { err: st.lastError });
+    c.report?.("keeper burst", err);
   }
 }

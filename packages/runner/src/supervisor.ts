@@ -3,6 +3,7 @@ import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbl
 import { CAMPAIGNS, FAUCET, PLUMBUSD, schedule } from "./config.js";
 import { fetchWindowFigures } from "./windowData.js";
 import { windowLabel } from "./core/windowSummary.js";
+import { emptyErrorGate, errorType, gateError, lastFinishedWindow, shortError, type ErrorGateState } from "./core/errors.js";
 import { formatHealth, plumbusdLines, rpcLines, runnerLines, treasuryLine, walletLines, windowLines, type NodeResult } from "./core/health.js";
 import { makeClients, readBalances, takeFallbacks, tryEach } from "./chain.js";
 import { ensureCampaign } from "./campaign.js";
@@ -49,6 +50,23 @@ export class Supervisor {
     this.log = makeLogger(redact);
   }
 
+  /**
+   * Sends one Telegram message. A failed send cannot be reported on Telegram, so it is counted in storage, shown in /health,
+   * and the next message that does get through says how many were lost and why.
+   */
+  private async deliver(text: string): Promise<boolean> {
+    const failures = await this.get<{ count: number; lastAt: number; last: string }>("alertFailures");
+    const note = failures ? `\n(${failures.count} earlier alert(s) could not be sent; the last at ${new Date(failures.lastAt * 1000).toISOString().slice(11, 19)} UTC: ${failures.last})` : "";
+    const r = await sendTelegram({ token: this.env.TELEGRAM_BOT_TOKEN, chatId: this.env.TELEGRAM_CHAT_ID }, text + note, this.redact);
+    if (r.ok) {
+      if (failures) await this.state.storage.delete("alertFailures");
+      return true;
+    }
+    this.log.warn("alert not sent", { err: r.error });
+    await this.state.storage.put("alertFailures", { count: (failures?.count ?? 0) + 1, lastAt: Math.floor(Date.now() / 1000), last: shortError(r.error, this.redact, 80) });
+    return false;
+  }
+
   /** Sends a Telegram alert unless the same `key` was sent within the repeat window. Never throws. */
   private alert(key: string, text: string, force = false): Promise<void> {
     this.alerts = this.alerts.then(async () => {
@@ -57,13 +75,36 @@ export class Supervisor {
         const state = (await this.get<AlertGate>("alertGate")) ?? {};
         if (!force && !gate(state, key, now, schedule.alerts.repeatMinutes)) return;
         await this.state.storage.put("alertGate", prune(force ? { ...state, [key]: now } : state, now));
-        const r = await sendTelegram({ token: this.env.TELEGRAM_BOT_TOKEN, chatId: this.env.TELEGRAM_CHAT_ID }, text, this.redact);
-        if (!r.ok) this.log.warn("alert not sent", { key, err: r.error });
+        await this.deliver(text);
       } catch (err) {
         this.log.warn("alert failed", { key, err: errText(err) });
       }
     });
     return this.alerts;
+  }
+
+  /**
+   * Reports an uncaught exception or a failed send or call: one alert per kind of error per hour with a count of the repeats it
+   * hid, at most 20 an hour in all (core/errors.ts). The text is shortened and has URLs, keys and tokens taken out.
+   */
+  private reportError(role: string, context: string, type: string, text: string, count = 1): Promise<void> {
+    this.alerts = this.alerts.then(async () => {
+      try {
+        const state = (await this.get<ErrorGateState>("errorGate")) ?? emptyErrorGate();
+        const verdict = gateError(state, `${role}|${context}|${type}`, Math.floor(Date.now() / 1000), count);
+        await this.state.storage.put("errorGate", state);
+        if (verdict.do === "suppress") return;
+        await this.deliver(verdict.do === "cap-notice" ? msg.errorCap() : msg.error(role, `${context}, ${type}`, shortError(text, this.redact), verdict.repeats));
+      } catch (err) {
+        this.log.warn("error report failed", { err: errText(err) });
+      }
+    });
+    return this.alerts;
+  }
+
+  private fail(context: string, err: unknown): Promise<void> {
+    this.log.error(context, { err: errText(err) });
+    return this.reportError("supervisor", context, errorType(err), errText(err));
   }
 
   private treasuryCtx(): TreasuryCtx {
@@ -83,6 +124,15 @@ export class Supervisor {
   }
 
   async fetch(req: Request): Promise<Response> {
+    try {
+      return await this.route(req);
+    } catch (err) {
+      await this.fail("request", err);
+      return safeJson({ error: "internal error" }, { status: 500 });
+    }
+  }
+
+  private async route(req: Request): Promise<Response> {
     const url = new URL(req.url);
     switch (url.pathname) {
       case "/tick":
@@ -153,6 +203,7 @@ export class Supervisor {
       nextWindow: next,
       lastDecision: (await this.get<unknown>("lastDecision")) ?? null,
       lastSummary: (await this.get<unknown>("lastSummary")) ?? null,
+      alertFailures: (await this.get<unknown>("alertFailures")) ?? null,
       treasury: {
         address: schedule.treasury.address,
         topUpsOn: schedule.topUp.enabled,
@@ -173,7 +224,11 @@ export class Supervisor {
   private async stopRoles(reason: string): Promise<void> {
     await this.state.storage.delete("runId");
     await Promise.all(
-      ROLES.map((r) => this.env.ROLE.get(this.env.ROLE.idFromName(r)).fetch("https://role/stop", { method: "POST" }).catch(() => undefined)),
+      ROLES.map((r) =>
+        this.env.ROLE.get(this.env.ROLE.idFromName(r))
+          .fetch("https://role/stop", { method: "POST" })
+          .catch((err) => this.log.warn("a bot did not answer the stop request", { role: r, err: errText(err) })),
+      ),
     );
     await this.state.storage.put("rolesRunning", false);
     this.log.info("roles stopped", { reason });
@@ -197,6 +252,9 @@ export class Supervisor {
     if (!e || typeof e.kind !== "string") return safeJson({ ok: false });
     const role = typeof e.role === "string" && (ROLES as string[]).includes(e.role) ? e.role : "a bot";
     if (e.kind === "fallback") await this.alert("fallback", msg.rpcFallback());
+    if (e.kind === "error" && typeof e.context === "string" && typeof e.text === "string") {
+      await this.reportError(role, e.context.slice(0, 60), typeof e.type === "string" ? e.type.slice(0, 40) : "Error", e.text.slice(0, 300), Math.max(1, Math.min(1000, Number(e.count) || 1)));
+    }
     if (e.kind === "restarted" && typeof e.at === "number") await this.alert(`restarted:${role}`, msg.keeperRestarted(e.at, role));
     if (e.kind === "ended" && typeof e.reason === "string") {
       // A normal end needs nothing here: the window summary is built from the chain by the tick after the window.
@@ -212,13 +270,16 @@ export class Supervisor {
    * the least funding left, and any restart the keeper had. If the chain cannot be read it says so and shows
    * the keeper's saved counters instead, marked as possibly partial.
    */
-  private async summarizeWindow(due: { start: number; end: number }): Promise<void> {
+  private async summarizeWindow(due: { start: number; end: number }): Promise<boolean> {
     try {
       const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
       const keeperAddr = schedule.wallets.keeper;
       const [chainRes, keeperState] = await Promise.all([
         keeperAddr ? fetchWindowFigures(fetch, keeperAddr, CAMPAIGNS, due.start, due.end) : Promise.resolve({ ok: false as const, reason: "no keeper address in the schedule" }),
-        this.env.ROLE.get(this.env.ROLE.idFromName("keeper")).fetch("https://role/state").then((r) => r.json() as Promise<{ saved?: { runId: number; keeper: { probesSent: number; probesLanded: number; probesReverted: number }; restarts: number[] } }>).catch(() => ({}) as { saved?: undefined }),
+        this.env.ROLE.get(this.env.ROLE.idFromName("keeper")).fetch("https://role/state").then((r) => r.json() as Promise<{ saved?: { runId: number; keeper: { probesSent: number; probesLanded: number; probesReverted: number }; restarts: number[] } }>).catch((err) => {
+          this.log.warn("the keeper's saved counters could not be read", { err: errText(err) });
+          return {} as { saved?: undefined };
+        }),
       ]);
       const saved = keeperState.saved && keeperState.saved.runId === due.start ? keeperState.saved : null;
       const balances = await tryEach(clients, (c) => readBalances(c, schedule));
@@ -269,8 +330,10 @@ export class Supervisor {
       // Anything failing also gets its own alert, so it is not buried in the daily message.
       if (formatted.failed.length) await this.alert("health-fail", msg.healthFailed(formatted.failed));
       await this.state.storage.put("lastSummary", { window: due.start, at: Math.floor(Date.now() / 1000), figures: f && { ...f, gasUsedTotal: f.gasUsedTotal.toString(), gasWei: f.gasWei.toString(), revertedGasUsed: f.revertedGasUsed.toString(), revertedGasWei: f.revertedGasWei.toString() } });
+      return true;
     } catch (err) {
-      this.log.warn("summary not sent", { err: errText(err) });
+      await this.fail("window summary", err);
+      return false;
     }
   }
 
@@ -317,7 +380,7 @@ export class Supervisor {
     try {
       result = await runTopUp(this.treasuryCtx(), now, balances);
     } catch (err) {
-      this.log.warn("top-up check failed", { err: errText(err) });
+      await this.fail("top-up check", err);
       await this.state.storage.put("topUpNote", { at: now, note: "the check failed", sent: 0 });
       return balances;
     }
@@ -336,6 +399,10 @@ export class Supervisor {
     this.busy = true;
     try {
       await this.tickOnce();
+    } catch (err) {
+      // An uncaught exception must not end the alarm chain: say so, and look again in 20 seconds.
+      await this.fail("tick", err);
+      await this.state.storage.setAlarm(Date.now() + TICK_MS).catch(() => undefined);
     } finally {
       this.busy = false;
     }
@@ -381,16 +448,41 @@ export class Supervisor {
     }
   }
 
+  /**
+   * Thirty minutes after a window should have ended, if no summary was saved for it, say so once. The first time this version
+   * runs it only notes the latest finished window, so a window that ended before then is not reported as missed.
+   */
+  private async checkMissedWindow(now: number): Promise<void> {
+    const w = lastFinishedWindow(schedule.windows, now, 1800);
+    if (!w || !schedule.enabled) return;
+    const tracked = await this.get<number>("windowTracked");
+    if (tracked === undefined) {
+      await this.state.storage.put("windowTracked", w.start);
+      return;
+    }
+    if (tracked >= w.start) return;
+    await this.state.storage.put("windowTracked", w.start);
+    const last = await this.get<{ window: number }>("lastSummary");
+    if (last?.window === w.start) return;
+    await this.state.storage.delete("summaryDue");
+    const killed = (await this.get<boolean>("killed")) ?? false;
+    const halt = await this.get<Halt>("halt");
+    const why = killed ? "The kill switch is on." : halt ? `The runner is halted (${halt.kind}): ${shortError(halt.reason, this.redact, 100)}` : "Nothing says why: check the runner's logs, then pnpm check:all.";
+    await this.alert(`missed-window:${w.start}`, msg.missedWindow(windowLabel(w.start, w.end), why));
+  }
+
   private async tickOnce(): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
     await this.state.storage.put("lastTickAt", now);
     await this.checkPlumbusd(now);
     // A finished window gets its summary once, a minute after it ended.
     const due = await this.get<{ start: number; end: number }>("summaryDue");
-    if (due && now >= due.end + 60) {
-      await this.state.storage.delete("summaryDue");
-      await this.summarizeWindow(due);
+    // It is kept until it is saved, and tried again every five minutes if the chain or Telegram was not ready.
+    if (due && now >= due.end + 60 && now - ((await this.get<number>("summaryTriedAt")) ?? 0) >= 300) {
+      await this.state.storage.put("summaryTriedAt", now);
+      if (await this.summarizeWindow(due)) await this.state.storage.delete("summaryDue");
     }
+    await this.checkMissedWindow(now);
     const killed = (await this.get<boolean>("killed")) ?? false;
     // Nothing to do (switched off, killed, or outside a window): answer without a single network call.
     const quick = decide({ schedule, nowSec: now, killed, halt: null, balances: null, dayStart: null });

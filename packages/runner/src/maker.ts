@@ -50,6 +50,8 @@ export interface MakerCtx {
   client: PublicClient;
   state: MakerState;
   log: Logger;
+  /** Tells the supervisor about a failed call or send (it dedupes and rate-limits). */
+  report?: (context: string, err: unknown) => void;
 }
 
 async function pollReference(c: MakerCtx): Promise<void> {
@@ -69,6 +71,7 @@ async function pollReference(c: MakerCtx): Promise<void> {
     c.state.midAt = started;
   } catch (err) {
     c.state.lastError = errText(err);
+    c.report?.("price feed", err);
   }
 }
 
@@ -87,6 +90,7 @@ async function readInventory(c: MakerCtx): Promise<void> {
     c.state.invAt = Date.now();
   } catch (err) {
     c.state.lastError = errText(err);
+    c.report?.("inventory read", err);
   }
 }
 
@@ -99,6 +103,7 @@ export async function cancelQuote(c: MakerCtx, reason: string): Promise<void> {
     c.log.warn("quote cancelled", { reason });
   } catch (err) {
     c.log.error("cancel failed", { reason, err: errText(err) });
+    c.report?.("quote cancel", err);
   }
 }
 
@@ -145,6 +150,7 @@ export async function makerTick(c: MakerCtx): Promise<"ok" | "backoff"> {
     s.consecutiveFailures += 1;
     s.lastError = errText(err);
     c.log.warn("setQuote failed", { err: s.lastError, consecutive: s.consecutiveFailures });
+    c.report?.("quote send", err);
     if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       s.consecutiveFailures = 0;
       return "backoff";

@@ -3,6 +3,7 @@ import type { RunnerWallet } from "@plumbline/shared";
 import { schedule } from "./config.js";
 import { Signer, makeClients, takeFallbacks } from "./chain.js";
 import { accountFor, redactorFor, type Env } from "./env.js";
+import { errorType } from "./core/errors.js";
 import { errText, makeLogger, setRedactor, withFields, type Logger, safeJson } from "./core/log.js";
 import { cancelQuote, makerTick, newMakerState, type MakerState } from "./maker.js";
 import { keeperBurst, newKeeperState, restoreKeeper, saveKeeper, type KeeperSaved, type KeeperState } from "./keeper.js";
@@ -66,6 +67,10 @@ export class Role {
   private lastSaved = "";
   private lastMakerSaveAt = 0;
   private restarts: number[] = [];
+  /** Errors waiting to be told to the supervisor, and when each kind was last told. */
+  private reported = new Map<string, { lastTold: number; pending: number }>();
+  private tells: Promise<void>[] = [];
+  private roleName: string = "role";
 
   constructor(
     private readonly state: DurableObjectState,
@@ -205,8 +210,26 @@ export class Role {
       client: clients[0] as PublicClient,
       state: this.maker,
       log: withFields(this.log, { bot: role }),
+      report: this.report,
     };
   }
+
+  /**
+   * A failed call or send. The first of each kind is told at once; repeats are counted and told at most once a minute with
+   * their count. The supervisor turns that into one Telegram line an hour. Never throws and never waits.
+   */
+  private report = (context: string, err: unknown): void => {
+    const type = errorType(err);
+    const key = `${context}|${type}`;
+    const e = this.reported.get(key) ?? { lastTold: 0, pending: 0 };
+    e.pending += 1;
+    this.reported.set(key, e);
+    if (Date.now() - e.lastTold < 60_000) return;
+    const count = e.pending;
+    e.pending = 0;
+    e.lastTold = Date.now();
+    this.tells.push(this.tell({ kind: "error", role: this.roleName, context, type, text: errText(err), count }));
+  };
 
   /** Asks the supervisor whether this run should go on. True while it says yes. */
   private async supervisorSays(runId: number): Promise<boolean> {
@@ -216,15 +239,30 @@ export class Role {
       const body = (await res.json()) as { run: boolean };
       this.lastOk = Date.now();
       return body.run;
-    } catch {
-      return Date.now() - this.lastOk < SUPERVISOR_SILENCE_MS;
+    } catch (err) {
+      const stillTrusted = Date.now() - this.lastOk < SUPERVISOR_SILENCE_MS;
+      this.log.warn("the supervisor did not answer", { err: errText(err), stillTrusted });
+      return stillTrusted;
     }
   }
 
   async alarm(): Promise<void> {
+    try {
+      await this.alarmInner();
+    } catch (err) {
+      // Anything not already handled: say so, and end the run cleanly rather than leave it half alive.
+      this.log.error("role alarm failed", { err: errText(err) });
+      this.report("alarm", err);
+      await Promise.allSettled(this.tells.splice(0));
+      await this.finish(`error: ${errText(err)}`).catch(() => undefined);
+    }
+  }
+
+  private async alarmInner(): Promise<void> {
     const cfg = await this.cfg();
     if (!cfg?.running) return;
     const t0 = Date.now();
+    this.roleName = cfg.role;
     if (!this.booted) await this.onBoot(cfg);
     if (t0 / 1000 >= cfg.windowEnd) return this.finish("the window ended");
     if (t0 - this.lastCheck > CHECK_EVERY_MS) {
@@ -238,7 +276,7 @@ export class Role {
         if (!account) return this.finish("KEEPER_KEY is not set");
         const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
         this.signer ??= new Signer(account, clients);
-        await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: withFields(this.log, { bot: "keeper" }) });
+        await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: withFields(this.log, { bot: "keeper" }), report: this.report });
         if (this.keeper.failed >= MAX_KEEPER_FAILURES) return this.finish("too many failures");
         next = Date.now() + 100;
       } else {
@@ -259,6 +297,7 @@ export class Role {
       return this.finish(`error: ${errText(err)}`);
     }
     await this.saveStats(cfg);
+    await Promise.allSettled(this.tells.splice(0));
     // A read or send that had to leave the private node: say so, at most every five minutes.
     if (takeFallbacks() > 0 && Date.now() - this.lastFallbackTold > 300_000) {
       this.lastFallbackTold = Date.now();

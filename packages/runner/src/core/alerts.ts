@@ -88,5 +88,9 @@ export const msg = {
   },
   healthFailed: (failed: { name: string; detail: string }[]) =>
     `Plumbline runner: ${failed.length} health check(s) failed after the window.\n${failed.map((f) => `- ${f.name}: ${f.detail}`).join("\n")}`,
+  error: (role: string, context: string, text: string, repeats: number) =>
+    `Plumbline runner: error in ${role} (${context}): ${text}${repeats > 0 ? ` (${repeats} similar error(s) since the last alert)` : ""}`,
+  errorCap: () => "Plumbline runner: 20 error alerts have been sent this hour, so further errors are only logged until the hour is up.",
+  missedWindow: (label: string, why: string) => `Plumbline runner: the window ${label} ended over 30 minutes ago and no summary was saved. ${why}`,
   keeperRestarted: (atSec: number, role: string) => `Plumbline runner: the ${role} bot restarted mid-window at ${new Date(atSec * 1000).toISOString().slice(11, 19)} UTC. Its counters were kept.`,
 };
