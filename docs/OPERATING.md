@@ -102,7 +102,8 @@ Every message starts with "Plumbline runner:". Alerts go only to your chat. The 
 | `the kill switch was used` / `/resume was used` | Someone ran kill or resume. | If it was not you, rotate `ADMIN_TOKEN` ([section 7](#7-rotate-keys-and-secrets)). |
 | `the faucet pool holds X PLUMBUSD` | The faucet is below 20,000. | Mint more (below). |
 | `the sponsor wallet holds X PLUMBUSD` | The sponsor is below 2,000 and may not be able to open the next campaign. | Mint more (below). |
-| `the <bot> bot restarted mid-window at HH:MM:SS UTC` | Cloudflare restarted that bot's Durable Object. Its counters were kept. | Nothing. The window summary lists restarts. |
+| `the <bot> bot restarted mid-window at HH:MM:SS UTC` | Cloudflare restarted that bot's Durable Object. Its counters were kept, and it starts again at its first tick (it polls the price and quotes straight away). This alert is sent at most once an hour per bot, but **every** restart is recorded and listed in the daily summary (`Bot restarts in the window (N): makerA 13:34:08, ...`). | Nothing for one or two. If the list is long, see [section 11](#11-diagnosing-restarts). |
+| `<bot>'s sends moved from the private node to the public node (Elysium) after a Network error` | A send failed twice on the preferred node, so that bot's sends moved to the next node. It tries the preferred node again after about 30 seconds. At most one alert an hour per bot. | Usually nothing. If it repeats every hour, see [the private node](#the-private-node-failed). |
 | `window 13:00–17:00 UTC: N probes sent, ...` | The daily summary, built from the chain: probes sent, landed, reverted (with %), settles and the keeper's gas for the window. The last lines give HYPE spent over the **whole UTC day** and the least funding left. | Read it. If "least funding left" is a few days and the treasury is empty, fund the treasury. |
 | `Health: all checks passed` / `Health: N failed` (the last lines of the daily summary) | The same checks as `pnpm check:all`, run a minute after each window: RPC nodes, the runner's own state, every wallet against its floor, the treasury, the sponsor and faucet PLUMBUSD, and the window figures against the chain. Passing groups show one `PASS` line; a failure shows its own `FAIL` line. | Act on each `FAIL` line using the table in [section 1](#1-is-everything-healthy-start-here). |
 | `N health check(s) failed after the window` | A separate message, sent only when something in the Health block failed (once an hour at most), so it is not missed inside the daily summary. | Same as above. |
@@ -134,8 +135,11 @@ check it is running and the key is active. If you made a new node or key, set th
 
 ### Where to see the logs
 
-Browser: Cloudflare dashboard → Workers & Pages → `plumbline-runner` → **Logs** (turn on Workers Logs if asked). Terminal:
-`cd packages/runner` then `npx wrangler tail` shows lines live. Logs have every secret removed.
+Browser: Cloudflare dashboard → Workers & Pages → `plumbline-runner` → **Logs**. Workers Logs is switched on in the project's
+`wrangler.jsonc` (every invocation with its outcome, plus the runner's own lines), so after a deploy the page fills in. The free plan keeps
+200,000 events a day for 3 days; the runner makes about 40,000 invocations a day, so there is room. Terminal: `cd packages/runner` then
+`npx wrangler tail` shows lines live. The runner's own lines have every secret removed. The admin token is sent in the request body, not a header,
+so it cannot appear in the invocation records.
 
 ---
 
@@ -360,3 +364,24 @@ the project. If a ping fails (the service is down or slow), that is counted and 
 **Rotate it.** In the service, create a new ping address (or regenerate the old one) and retire the old one. Delete the
 `HEALTHCHECK_URL=` line in `.env`, then repeat steps 2 and 3. To switch the heartbeat off, delete the secret in the dashboard
 (Workers & Pages, `plumbline-runner`, Settings, Variables and Secrets) and the line in `.env`.
+
+---
+
+## 11. Diagnosing restarts
+
+Cloudflare sometimes restarts a bot's Durable Object (the part of the runner that holds a bot). The runner is built to survive it: the
+counters are kept, the quote is not cancelled, and a restart costs a few seconds of quoting at most. To see how often it happens and
+what the bots' alarms looked like at the time:
+
+* **The daily summary** lists every restart of the window, by bot and time.
+* **`pnpm runner diag`** (or `pnpm runner diag 180` for the last three hours) prints a short table per bot and for the supervisor: how many
+  alarms ran, how many failed, how many were slow, the average and longest run time in milliseconds, and the longest delay before an alarm
+  started (a long delay means the runtime was away), with the kind of each failure (for example `Timeout`). It also lists restarts noticed.
+  The record is kept in the runner's own storage, one line per minute for the last two hours, and holds only numbers and error kinds: no
+  messages, URLs or keys.
+* **Cloudflare, in the browser:** Workers & Pages → `plumbline-runner` → **Metrics** (errors by outcome, such as memory or CPU exceeded, and
+  Durable Object usage against the free limits) and **Logs** (each alarm with its outcome). If the Metrics page shows memory-exceeded or
+  CPU-exceeded errors, that is the cause; if it shows none, the restarts come from Cloudflare moving or updating the host.
+
+If sends to the preferred node fail, a bot moves to the next node and says so (the alert above), then returns after about 30 seconds. A send is
+signed once and retried at most once with the same signed bytes, so a lost reply can never become a second transaction.

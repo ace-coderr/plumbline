@@ -31,7 +31,7 @@ Why Cloudflare, with the measured numbers and the terms it was checked against: 
   key can reach a log (`test/leak.test.ts`, with a random-key sweep and a source scan). Logs exist only in your Cloudflare account.
 * `/status` on the site shows the schedule, the next window in UTC and Lagos time, and the last heartbeat read from the chain.
 
-Public routes: `GET /health` (state, no secret in it, cached 15 s). Admin routes need `Authorization: Bearer <ADMIN_TOKEN>`:
+Public routes: `GET /health` (state, no secret in it, cached 15 s). Admin routes need the token in a JSON body `{"token": "<ADMIN_TOKEN>"}` (an `Authorization: Bearer` header also works, but Workers Logs may record headers, so use the body):
 `POST /kill`, `POST /resume`, `POST /tick`. Workflows or pull requests cannot trigger anything: there is no workflow.
 
 ## Secrets and funding (nothing is pasted into chat)
@@ -99,7 +99,7 @@ domain, zone or route.
 
 ### Kill switch
 
-1. **Instant:** `curl -X POST https://plumbline-runner.<your-subdomain>.workers.dev/kill -H "Authorization: Bearer <ADMIN_TOKEN>"`
+1. **Instant:** `pnpm runner kill` (it sends the token from your `.env` in the request body)
    stops all three bots (each cancels its quote) and keeps them stopped, across windows and restarts, until
    `POST /resume`. `GET /health` shows `"killed": true`.
 2. **At the source:** set `"enabled": false` in `bots.schedule.json`, commit, `npx wrangler deploy`.
