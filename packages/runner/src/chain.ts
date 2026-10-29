@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   http,
+  keccak256,
   parseAbi,
   type Address,
   type Hash,
@@ -11,6 +12,7 @@ import {
 import type { PrivateKeyAccount } from "viem/accounts";
 import { ELYSIUM_TESTNET, RUNNER_WALLETS, elysiumTestnet, type BotsSchedule } from "@plumbline/shared";
 import type { Balances } from "./core/budget.js";
+import { errorType } from "./core/errors.js";
 
 /** The two public nodes, each asked once per call: failure is reported, never retried in a loop. */
 export const RPC_URLS = [ELYSIUM_TESTNET.rpcUrl, "https://rpc-elysium-testnet.t.conduit.xyz"] as const;
@@ -68,40 +70,114 @@ export async function readBalances(client: PublicClient, schedule: BotsSchedule)
   return out;
 }
 
+/** How a failed send is treated. Only what the node did, not what the transaction was, decides a retry or a fall back. */
+export type SendFailure = "known" | "nonce-low" | "rejected" | "rate-limit" | "transient";
+
+const KNOWN = /already known|known transaction|already imported|already exists|already in (the )?(mem)?pool|ALREADY_EXISTS/i;
+const NONCE_LOW = /nonce (is )?too low|nonce has already been used|NonceTooLow/i;
+const REJECTED = /insufficient funds|execution reverted|intrinsic gas|gas (limit )?too low|underpriced|exceeds block gas|invalid sender|max fee per gas less than|exceeds the balance/i;
+const RATE_LIMIT = /rate.?limit|\b429\b|too many requests/i;
+
+/** Sorts a send error into one of five kinds, from its message and its node detail. */
+export function classifySend(err: unknown): SendFailure {
+  const e = err as { shortMessage?: string; details?: string; message?: string } | null;
+  const text = `${e?.shortMessage ?? ""} ${e?.details ?? ""} ${e?.message ?? String(err)}`;
+  if (KNOWN.test(text)) return "known";
+  if (NONCE_LOW.test(text)) return "nonce-low";
+  if (REJECTED.test(text)) return "rejected";
+  if (RATE_LIMIT.test(text)) return "rate-limit";
+  return "transient";
+}
+
+/** After a fall back, the preferred node is tried again once this long has passed. */
+export const RETURN_TO_PREFERRED_MS = 30_000;
+
+export interface FallbackEvent {
+  /** Indexes into the signer's node list, in its own order (0 is the preferred node). */
+  from: number;
+  to: number;
+  failure: SendFailure;
+  /** The kind of error (its name, never its text). */
+  type: string;
+}
+
+export interface SignerOptions {
+  /** Names for the nodes, in order, for messages. Never URLs. */
+  names?: string[];
+  /** Called when a send moves to another node. Must not throw and must not wait on anything slow. */
+  onFallback?: (e: FallbackEvent) => void;
+}
+
 /**
- * Signs and submits from one wallet with a locally tracked nonce. One attempt per call: when a send
- * fails the nonce is dropped and re-read on the next call, which is the only recovery there is.
+ * Sends one wallet's transactions in order. The nonce is kept here, so sends need no read in between.
+ *
+ * A send is signed once. If the node does not answer cleanly the very same signed bytes are sent once more to the same node; they
+ * can only ever become one transaction (same nonce, same hash), so a lost response can never turn into a second transaction. A node
+ * that says "already known", or "nonce too low" for a transaction it can show under our hash, has our transaction: that is success.
+ * If the retry fails too, the nonce is forgotten (it is read again from the next node) and sends move to the next node. After
+ * RETURN_TO_PREFERRED_MS they try the preferred node again.
  */
 export class Signer {
   private nonce: number | null = null;
   private fee = 0n;
   private feeAt = 0;
 
-  /** Which node sends go to. It moves to the other one when a send fails, and stays there. */
+  /** The node sends go to: an index into `clients`. */
   private ix = 0;
+  /** When to try the preferred node again, ms. */
+  private returnAt = 0;
   private readonly clients: PublicClient[];
+  private readonly opts: SignerOptions;
 
   constructor(
     readonly account: PrivateKeyAccount,
     client: PublicClient | PublicClient[],
+    opts: SignerOptions = {},
   ) {
     this.clients = Array.isArray(client) ? client : [client];
+    this.opts = opts;
   }
 
   private get client(): PublicClient {
-    return this.clients[this.ix % this.clients.length] as PublicClient;
+    return this.clients[this.ix] as PublicClient;
   }
 
   get address(): Address {
     return this.account.address;
   }
 
-  /** True once a send has moved this signer off its first node. */
+  /** True while sends are going to a node other than the preferred one. */
   get fellBack(): boolean {
-    return this.ix > 0;
+    return this.ix !== 0;
+  }
+
+  /** The preferred node again, once the wait is over. The nonce is ours and stays as it is. */
+  private returnToPreferred(): void {
+    if (this.ix !== 0 && Date.now() >= this.returnAt) this.ix = 0;
+  }
+
+  private fallBack(failure: SendFailure, err: unknown): void {
+    if (this.clients.length < 2) return;
+    const from = this.ix;
+    this.ix = (this.ix + 1) % this.clients.length;
+    this.returnAt = Date.now() + RETURN_TO_PREFERRED_MS;
+    try {
+      this.opts.onFallback?.({ from, to: this.ix, failure, type: errorType(err) });
+    } catch {
+      // A broken alert hook must never stop a send.
+    }
+  }
+
+  /** Whether the node can show a transaction under this hash: ours is already in. */
+  private async has(hash: Hash): Promise<boolean> {
+    return this.client.getTransaction({ hash }).then(
+      () => true,
+      () => false,
+    );
   }
 
   async send(to: Address, data: Hex, gas: bigint, value = 0n): Promise<Hash> {
+    this.returnToPreferred();
     if (this.nonce === null) this.nonce = await this.client.getTransactionCount({ address: this.account.address, blockTag: "pending" });
     if (Date.now() - this.feeAt > 30_000 || this.fee === 0n) {
       // Twice the current price: the fee only has to clear the base fee, and Elysium's is flat.
@@ -120,15 +196,34 @@ export class Signer {
       maxFeePerGas: this.fee,
       maxPriorityFeePerGas: 0n,
     });
-    try {
-      const hash = await this.client.sendRawTransaction({ serializedTransaction: raw });
-      this.nonce = nonce + 1;
-      return hash;
-    } catch (err) {
-      this.nonce = null;
-      this.ix += 1;
-      throw err;
+    const hash = keccak256(raw);
+    let last: unknown;
+    let failure: SendFailure = "transient";
+    // At most two tries, both with these same signed bytes. Nothing below signs anything again.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const sent = await this.client.sendRawTransaction({ serializedTransaction: raw });
+        this.nonce = nonce + 1;
+        return sent;
+      } catch (err) {
+        last = err;
+        failure = classifySend(err);
+        if (failure === "known") {
+          this.nonce = nonce + 1;
+          return hash;
+        }
+        if (failure === "nonce-low" && (await this.has(hash))) {
+          this.nonce = nonce + 1;
+          return hash;
+        }
+        // Only a node that did not answer is worth asking again right away.
+        if (failure !== "transient") break;
+      }
     }
+    // Not known to be in. Read the nonce again before the next send; and if the node itself was the trouble, move on from it.
+    this.nonce = null;
+    if (failure === "transient" || failure === "rate-limit") this.fallBack(failure, last);
+    throw last;
   }
 
   /** Send and wait for the receipt, polling a bounded number of times; throws unless it succeeded. */
