@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   else if (!base || !process.env.ADMIN_TOKEN) fail("Telegram delivery", "needs RUNNER_URL and ADMIN_TOKEN in .env");
   else {
     try {
-      const res = await fetch(`${base}/alert-test`, { method: "POST", headers: { authorization: `Bearer ${process.env.ADMIN_TOKEN}` }, signal: AbortSignal.timeout(15_000) });
+      const res = await fetch(`${base}/alert-test`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: process.env.ADMIN_TOKEN }), signal: AbortSignal.timeout(15_000) });
       const body = (await res.json()) as { ok?: boolean; error?: string };
       if (res.ok && body.ok) pass("Telegram delivery", "Telegram accepted the test message; check your chat for it");
       else fail("Telegram delivery", body.error ?? `HTTP ${res.status}`);

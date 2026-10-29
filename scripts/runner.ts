@@ -7,6 +7,7 @@
  *   pnpm runner put-secrets [SECRET ...]        sends values from .env to Cloudflare secrets (all if none named)
  *   pnpm runner set-env <NAME>                  asks for a value in this terminal (hidden as you type) and saves it to .env
  *   pnpm runner find-chat-id                    reads your Telegram chat id after you message the bot, saves it
+ *   pnpm runner diag [minutes]                  how each bot's alarms went in the last hour (or N minutes): runs, failures, slow, latest start delay
  *   pnpm runner secrets                         lists the secret NAMES the Worker has
  *   pnpm runner mint <sponsor|faucet> <amount>  mints demo PLUMBUSD (whole tokens, at most 1,000,000) with the deployer key from .env
  *
@@ -56,7 +57,7 @@ const wrangler = (args: string[], input?: string) =>
 async function admin(path: string, method = "POST"): Promise<void> {
   const base = (env.RUNNER_URL ?? "").replace(/\/$/, "");
   if (!base || !env.ADMIN_TOKEN) die("RUNNER_URL and ADMIN_TOKEN must be in .env");
-  const res = await fetch(base + path, { method, headers: { authorization: `Bearer ${env.ADMIN_TOKEN}` }, signal: AbortSignal.timeout(30_000) });
+  const res = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify({ token: env.ADMIN_TOKEN }), signal: AbortSignal.timeout(30_000) });
   const text = scrub(await res.text());
   console.log(res.status, text.length > 1500 ? `${text.slice(0, 1500)}…` : text);
   if (!res.ok) process.exit(1);
@@ -176,8 +177,34 @@ async function setEnv(name: string | undefined): Promise<void> {
   console.log(`${name} saved to .env (${value.length} characters, not shown).${name in SECRETS ? ` Next: pnpm runner put-secrets ${name}` : ""}`);
 }
 
+/** Prints the runner's rolling alarm record as a short table. Numbers and error kinds only. */
+async function diag(minutes: number): Promise<void> {
+  const base = (env.RUNNER_URL ?? "").replace(/\/$/, "");
+  if (!base || !env.ADMIN_TOKEN) return die("RUNNER_URL and ADMIN_TOKEN must be in .env");
+  const res = await fetch(`${base}/diag`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: env.ADMIN_TOKEN }), signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) return die(`the runner answered ${res.status}`);
+  type Bucket = { m: number; n: number; err: number; slow: number; maxMs: number; sumMs: number; maxLateMs: number; types: Record<string, number> };
+  const body = (await res.json()) as { supervisor: Bucket[]; roles: Record<string, { buckets?: Bucket[] }>; restarts: { role: string; at: number }[] };
+  const since = Date.now() / 1000 - minutes * 60;
+  const row = (name: string, bs: Bucket[] = []) => {
+    const mine = bs.filter((b) => b.m + 60 > since);
+    const n = mine.reduce((a, b) => a + b.n, 0);
+    const types: Record<string, number> = {};
+    for (const b of mine) for (const [k, v] of Object.entries(b.types)) types[k] = (types[k] ?? 0) + v;
+    return `${name.padEnd(11)} ${String(n).padStart(6)} ${String(mine.reduce((a, b) => a + b.err, 0)).padStart(6)} ${String(mine.reduce((a, b) => a + b.slow, 0)).padStart(5)} ${String(n ? Math.round(mine.reduce((a, b) => a + b.sumMs, 0) / n) : 0).padStart(6)} ${String(mine.reduce((a, b) => Math.max(a, b.maxMs), 0)).padStart(7)} ${String(mine.reduce((a, b) => Math.max(a, b.maxLateMs), 0)).padStart(9)}  ${Object.entries(types).map(([k, v]) => `${k}:${v}`).join(" ")}`;
+  };
+  console.log(`last ${minutes} minutes        alarms errors  slow avg ms  max ms max late ms  error kinds`);
+  console.log(row("supervisor", body.supervisor));
+  for (const [r, v] of Object.entries(body.roles)) console.log(row(r, v.buckets));
+  const recent = body.restarts.filter((r) => r.at > since).map((r) => `${r.role} ${new Date(r.at * 1000).toISOString().slice(11, 19)}`);
+  console.log(recent.length ? `restarts noticed: ${recent.join(", ")} UTC` : "restarts noticed: none");
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 switch (cmd) {
+  case "diag":
+    await diag(Number(rest[0]) || 60);
+    break;
   case "kill":
   case "resume":
   case "tick":
@@ -210,5 +237,5 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("commands: kill, resume, tick, alert-test, topup-plan, topup-test <wallet> <hype>, new-wallet <ENV_NAME>, put-secrets [NAME...], find-chat-id, secrets, mint <sponsor|faucet> <amount>, set-env <NAME>");
+    console.log("commands: kill, resume, tick, alert-test, topup-plan, topup-test <wallet> <hype>, new-wallet <ENV_NAME>, put-secrets [NAME...], find-chat-id, secrets, mint <sponsor|faucet> <amount>, set-env <NAME>, diag [minutes]");
 }
