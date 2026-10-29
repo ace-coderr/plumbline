@@ -107,12 +107,12 @@ describe("the window summary comes from chain data", () => {
       minDays: 18.2,
       worst: "keeper",
       treasuryWei: 1_000_000_000_000_000_000n,
-      restarts: [Date.parse("2026-10-27T15:21:12Z") / 1000],
+      restarts: [{ role: "keeper", at: Date.parse("2026-10-27T15:21:12Z") / 1000 }],
       health: "Health: all checks passed",
     });
     const [line1, ...rest] = text.split("\n");
     assert.match(line1!, /window 13:00–17:00 UTC: 755 probes sent, 688 landed, 67 reverted \(8\.9%\), 58 settles\./);
-    assert.match(text, /restarted 1 time\(s\) in the window, at 15:21:12 UTC/);
+    assert.match(text, /Bot restarts in the window \(1\): keeper 15:21:12 UTC\./);
     const dayLine = rest.find((l) => l.includes("HYPE spent"))!;
     assert.match(dayLine, /HYPE spent today \(the whole UTC day so far, all six runner wallets, by balance change\): 0\.0200/);
     assert.ok(!/window/i.test(dayLine), "the day figure is never called a window figure");

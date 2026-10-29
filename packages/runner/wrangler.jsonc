@@ -12,5 +12,9 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Supervisor", "Role"] }],
   // Wakes the supervisor every minute. It does nothing unless bots.schedule.json says "enabled": true.
-  "triggers": { "crons": ["* * * * *"] }
+  "triggers": { "crons": ["* * * * *"] },
+  // Workers Logs: every invocation (alarms, cron, requests) with its outcome, plus the runner's own redacted log lines. The free plan keeps
+  // 200,000 events a day for 3 days; the runner makes about 40,000 invocations a day plus under a thousand log lines, so there is room.
+  // If a day ever went over, Cloudflare stops logging for the rest of that day; the Worker itself is not affected.
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

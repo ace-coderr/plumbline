@@ -37,6 +37,16 @@ async function reportToSupervisor(env: Env, context: string, err: unknown): Prom
   }
 }
 
+/** The admin token from a JSON body {"token": "..."}, or an empty string. */
+async function tokenFromBody(req: Request): Promise<string> {
+  try {
+    const b = (await req.clone().json()) as { token?: unknown };
+    return typeof b.token === "string" ? b.token : "";
+  } catch {
+    return "";
+  }
+}
+
 async function handle(req: Request, env: Env): Promise<Response> {
     setRedactor(redactorFor(env));
   const url = new URL(req.url);
@@ -55,9 +65,10 @@ async function handle(req: Request, env: Env): Promise<Response> {
     if (edgeCache) await edgeCache.put(key, res.clone());
     return res;
   }
-  if (req.method === "POST" && ["/kill", "/resume", "/tick", "/alert-test", "/topup-plan", "/topup-test"].includes(url.pathname)) {
+  if (req.method === "POST" && ["/kill", "/resume", "/tick", "/alert-test", "/topup-plan", "/topup-test", "/diag"].includes(url.pathname)) {
     if (!env.ADMIN_TOKEN) return json({ error: "admin actions are disabled: ADMIN_TOKEN is not set" }, 503);
-    const given = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    // The token travels in the request body, which Workers Logs does not record; the Authorization header is still accepted.
+    const given = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "") || (await tokenFromBody(req));
     if (!sameSecret(given, env.ADMIN_TOKEN)) return json({ error: "unauthorised" }, 401);
     return json(await (await supervisor(env).fetch(`https://supervisor${url.pathname}${url.search}`, { method: "POST" })).json());
   }
@@ -67,7 +78,7 @@ async function handle(req: Request, env: Env): Promise<Response> {
 export default {
   /**
    * Public: GET /health, the schedule and the supervisor's state (no secret in it).
-   * Admin, with `Authorization: Bearer <ADMIN_TOKEN>`: POST /kill, /resume, /tick, /alert-test, /topup-plan (a dry run), /topup-test?wallet=&hype= (one live transfer of at most 0.001 HYPE).
+   * Admin, with the token in a JSON body `{"token": "<ADMIN_TOKEN>"}` (or an `Authorization: Bearer` header): POST /kill, /resume, /tick, /alert-test, /topup-plan (a dry run), /topup-test?wallet=&hype= (one live transfer of at most 0.001 HYPE).
    * Nothing else is routed: the roles and the supervisor cannot be reached from outside.
    */
   async fetch(req: Request, env: Env): Promise<Response> {

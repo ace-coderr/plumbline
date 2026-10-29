@@ -1,9 +1,10 @@
 import type { PublicClient } from "viem";
 import type { RunnerWallet } from "@plumbline/shared";
 import { schedule } from "./config.js";
-import { Signer, makeClients, takeFallbacks } from "./chain.js";
+import { Signer, makeClients, takeFallbacks, type FallbackEvent } from "./chain.js";
 import { accountFor, redactorFor, type Env } from "./env.js";
 import { errorType } from "./core/errors.js";
+import { recordAlarm, summarizeAlarms, type AlarmBucket } from "./core/alarmlog.js";
 import { errText, makeLogger, setRedactor, withFields, type Logger, safeJson } from "./core/log.js";
 import { cancelQuote, makerTick, newMakerState, type MakerState } from "./maker.js";
 import { keeperBurst, newKeeperState, restoreKeeper, saveKeeper, type KeeperSaved, type KeeperState } from "./keeper.js";
@@ -29,10 +30,19 @@ interface RoleConfig {
   startedAt: number;
 }
 
-/** The node order a maker sends through. `slot` spreads the two makers over the public nodes. */
+/**
+ * The node order a maker sends through, preferred first. With a private node both makers use private, then the Elysium public
+ * node, then Conduit's public node. Without one, `slot` spreads the two makers over the two public nodes.
+ */
 export function sendOrder(clients: PublicClient[], slot: 0 | 1): PublicClient[] {
-  if (clients.length >= 3) return slot === 0 ? [clients[0], clients[1], clients[2]] as PublicClient[] : [clients[0], clients[2], clients[1]] as PublicClient[];
-  return slot === 0 ? [clients[0], clients[1]] as PublicClient[] : [clients[1], clients[0]] as PublicClient[];
+  if (clients.length >= 3) return [clients[0], clients[1], clients[2]] as PublicClient[];
+  return slot === 0 ? ([clients[0], clients[1]] as PublicClient[]) : ([clients[1], clients[0]] as PublicClient[]);
+}
+
+/** Names for nodes, in makeClients order: private (when there is one), Elysium public, Conduit public. Never URLs. */
+export function nodeNames(clients: PublicClient[]): Map<PublicClient, string> {
+  const names = clients.length >= 3 ? ["private node", "public node (Elysium)", "public node (Conduit)"] : ["public node (Elysium)", "public node (Conduit)"];
+  return new Map(clients.map((c, i) => [c, names[i] ?? `node ${i + 1}`]));
 }
 
 const QUOTER: Record<"makerA" | "makerB", RunnerWallet> = { makerA: "quoterA", makerB: "quoterB" };
@@ -42,6 +52,8 @@ const CHECK_EVERY_MS = 30_000;
 /** A role stops if the supervisor has not answered for this long: it must not run unsupervised. */
 const SUPERVISOR_SILENCE_MS = 150_000;
 const MAX_KEEPER_FAILURES = 120;
+/** A keeper alarm is a burst of about 3.5 s by design, so only much longer counts as slow. */
+const KEEPER_SLOW_MS = 6_000;
 /** After ten failed sends in a row a maker waits this long, and the run ends after this many such waits. */
 const BACKOFF_MS = 15_000;
 const MAX_BACKOFFS = 6;
@@ -71,6 +83,10 @@ export class Role {
   private reported = new Map<string, { lastTold: number; pending: number }>();
   private tells: Promise<void>[] = [];
   private roleName: string = "role";
+  /** How each alarm went, a bucket a minute, and when the next alarm was set for. */
+  private diag: AlarmBucket[] = [];
+  private expectedAt = 0;
+  private outcome = "ok";
 
   constructor(
     private readonly state: DurableObjectState,
@@ -88,10 +104,14 @@ export class Role {
   /** The first alarm after a restart: put the saved counters back, remember the restart, and say so. */
   private async onBoot(cfg: RoleConfig): Promise<void> {
     this.booted = true;
+    this.diag = (await this.state.storage.get<AlarmBucket[]>("diag")) ?? [];
     const saved = await this.savedStats();
     if (!saved || saved.runId !== cfg.runId) return;
     restoreKeeper(this.keeper, saved.keeper);
-    Object.assign(this.maker, saved.maker);
+    // The counts come back, but not the tick counter: a restarted maker must start at its first tick, which polls the price
+    // and quotes. (Restoring it once made the first tick skip the price and cancel the quote as stale.)
+    this.maker.sent = saved.maker.sent;
+    this.maker.failed = saved.maker.failed;
     const at = Math.floor(Date.now() / 1000);
     this.restarts = [...saved.restarts, at];
     await this.state.storage.put("stats", { ...saved, restarts: this.restarts } satisfies RoleStats);
@@ -136,9 +156,14 @@ export class Role {
       this.restarts = [];
       await this.state.storage.put("stats", { runId: body.runId, role: body.role, keeper: saveKeeper(this.keeper), maker: { ticks: 0, sent: 0, failed: 0 }, restarts: [] } satisfies RoleStats);
       await this.state.storage.put("cfg", { role: body.role, runId: body.runId, windowEnd: body.windowEnd, running: true, startedAt: Date.now() } satisfies RoleConfig);
-      await this.state.storage.setAlarm(Date.now() + 50);
+      this.expectedAt = Date.now() + 50;
+      await this.state.storage.setAlarm(this.expectedAt);
       this.log.info("role started", { role: body.role, runId: body.runId });
       return safeJson({ ok: true });
+    }
+    if (path === "/diag") {
+      this.diag = this.diag.length ? this.diag : ((await this.state.storage.get<AlarmBucket[]>("diag")) ?? []);
+      return safeJson({ role: this.roleName, buckets: this.diag });
     }
     if (path === "/stop") {
       await this.finish("stopped by the supervisor");
@@ -153,6 +178,7 @@ export class Role {
       windowEnd: cfg?.windowEnd ?? null,
       alarmSet: alarm !== null,
       saved: await this.savedStats(),
+      alarms: summarizeAlarms(this.diag.length ? this.diag : ((await this.state.storage.get<AlarmBucket[]>("diag")) ?? []), Math.floor(Date.now() / 1000), 60),
       maker: cfg?.role === "keeper" ? undefined : { ticks: this.maker.ticks, sent: this.maker.sent, failed: this.maker.failed, lastSendAt: this.maker.lastSendAt, lastError: this.maker.lastError },
       keeper: cfg?.role === "keeper" ? { bursts: this.keeper.bursts, pollsOk: this.keeper.pollsOk, pollsFailed: this.keeper.pollsFailed, probesSent: this.keeper.probesSent, probesLanded: this.keeper.probesLanded, probesReverted: this.keeper.probesReverted, settles: this.keeper.settles, failed: this.keeper.failed, lastProbeAt: this.keeper.lastProbeAt, lastError: this.keeper.lastError } : undefined,
     });
@@ -201,7 +227,8 @@ export class Role {
     // Sends go to the private node first, then the public ones. Without a private node, maker A sends
     // through the primary public node and maker B through Conduit, so neither carries both. Either way a
     // refused send moves that maker on to the next node and it stays there.
-    this.signer ??= new Signer(account, sendOrder(clients, role === "makerA" ? 0 : 1));
+    const ordered = sendOrder(clients, role === "makerA" ? 0 : 1);
+    this.signer ??= new Signer(account, ordered, this.signerOptions(ordered));
     return {
       vault: role === "makerA" ? schedule.vaults.a : schedule.vaults.b,
       settings: schedule.maker[MAKER_KEY[role]],
@@ -211,6 +238,19 @@ export class Role {
       state: this.maker,
       log: withFields(this.log, { bot: role }),
       report: this.report,
+    };
+  }
+
+  /** Names for the nodes and the hook that tells the supervisor when a send moves to another node. */
+  private signerOptions(ordered: PublicClient[]): { names: string[]; onFallback: (e: FallbackEvent) => void } {
+    const all = nodeNames((this.clients ??= makeClients(this.env.CONDUIT_RPC_URL)));
+    const names = ordered.map((c) => all.get(c) ?? "a node");
+    return {
+      names,
+      onFallback: (e) => {
+        this.log.warn("sends moved to another node", { from: names[e.from], to: names[e.to], failure: e.failure, type: e.type });
+        this.tells.push(this.tell({ kind: "send-fallback", role: this.roleName, from: names[e.from] ?? "a node", to: names[e.to] ?? "a node", failure: e.failure, type: e.type }));
+      },
     };
   }
 
@@ -247,14 +287,29 @@ export class Role {
   }
 
   async alarm(): Promise<void> {
+    const t0 = Date.now();
+    const lateMs = this.expectedAt > 0 ? Math.max(0, t0 - this.expectedAt) : 0;
+    this.outcome = "ok";
     try {
       await this.alarmInner();
     } catch (err) {
       // Anything not already handled: say so, and end the run cleanly rather than leave it half alive.
+      this.outcome = errorType(err);
       this.log.error("role alarm failed", { err: errText(err) });
       this.report("alarm", err);
       await Promise.allSettled(this.tells.splice(0));
       await this.finish(`error: ${errText(err)}`).catch(() => undefined);
+    }
+    await this.recordDiag(t0, lateMs);
+  }
+
+  /** Adds this alarm to the rolling record. Saved when a minute completes, or at once for a failure or a slow alarm. */
+  private async recordDiag(t0: number, lateMs: number): Promise<void> {
+    try {
+      const r = recordAlarm(this.diag, Math.floor(Date.now() / 1000), Date.now() - t0, lateMs, this.outcome, this.roleName === "keeper" ? KEEPER_SLOW_MS : undefined);
+      if (r.rolled || r.urgent) await this.state.storage.put("diag", this.diag);
+    } catch (err) {
+      this.log.warn("could not save the alarm record", { err: errText(err) });
     }
   }
 
@@ -275,7 +330,7 @@ export class Role {
         const account = accountFor(this.env, "keeper", schedule);
         if (!account) return this.finish("KEEPER_KEY is not set");
         const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
-        this.signer ??= new Signer(account, clients);
+        this.signer ??= new Signer(account, clients, this.signerOptions(clients));
         await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: withFields(this.log, { bot: "keeper" }), report: this.report });
         if (this.keeper.failed >= MAX_KEEPER_FAILURES) return this.finish("too many failures");
         next = Date.now() + 100;
@@ -294,6 +349,7 @@ export class Role {
       }
     } catch (err) {
       // A thrown error (a bad key, say) ends the run; it is never retried.
+      this.outcome = errorType(err);
       return this.finish(`error: ${errText(err)}`);
     }
     await this.saveStats(cfg);
@@ -303,6 +359,7 @@ export class Role {
       this.lastFallbackTold = Date.now();
       await this.tell({ kind: "fallback", role: cfg.role });
     }
-    await this.state.storage.setAlarm(Math.max(Date.now() + 50, next));
+    this.expectedAt = Math.max(Date.now() + 50, next);
+    await this.state.storage.setAlarm(this.expectedAt);
   }
 }

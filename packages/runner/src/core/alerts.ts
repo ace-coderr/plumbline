@@ -44,6 +44,15 @@ export async function sendTelegram(cfg: TelegramConfig, text: string, scrubText:
   }
 }
 
+/** "Bot restarts in the window (3): makerA 13:34:08, 15:02:35; keeper 14:59:05 UTC." or "none". */
+export function restartLine(restarts: { role: string; at: number }[]): string {
+  if (restarts.length === 0) return "Bot restarts in the window: none.";
+  const by = new Map<string, number[]>();
+  for (const r of [...restarts].sort((a, b) => a.at - b.at)) by.set(r.role, [...(by.get(r.role) ?? []), r.at]);
+  const parts = [...by.entries()].map(([role, ats]) => `${role} ${ats.map((t) => new Date(t * 1000).toISOString().slice(11, 19)).join(", ")}`);
+  return `Bot restarts in the window (${restarts.length}): ${parts.join("; ")} UTC.`;
+}
+
 const hype = (wei: bigint | number): string => (typeof wei === "bigint" ? Number(wei) / 1e18 : wei).toFixed(4);
 
 /** The one-line forms of every alert, so wording lives in one place and tests can see it. */
@@ -71,7 +80,8 @@ export const msg = {
     minDays: number;
     worst: string;
     treasuryWei: bigint;
-    restarts: number[];
+    /** Every bot restart noticed in the window, with the time it was noticed. */
+    restarts: { role: string; at: number }[];
     /** The Health block (core/health.ts formatHealth), shown last. */
     health: string;
   }) => {
@@ -81,7 +91,7 @@ export const msg = {
       : `Plumbline runner, window ${s.label}: chain figures unavailable (${s.unavailable?.reason ?? "unknown"}).${s.unavailable?.counters ? ` The runner's own counters, which may be partial: ${s.unavailable.counters.sent} sent, ${s.unavailable.counters.landed} landed, ${s.unavailable.counters.reverted} reverted.` : ""}`;
     const lines = [head];
     if (w?.mismatch) lines.push("Check: landed does not equal sent minus reverted, so some probe is unaccounted for.");
-    if (s.restarts.length) lines.push(`The keeper restarted ${s.restarts.length} time(s) in the window, at ${s.restarts.map((t) => new Date(t * 1000).toISOString().slice(11, 19)).join(", ")} UTC.`);
+    lines.push(restartLine(s.restarts));
     lines.push(`HYPE spent today (the whole UTC day so far, all six runner wallets, by balance change): ${hype(s.dayWei)}. Least funding left: ${s.worst}, ${s.minDays.toFixed(1)} days. Treasury ${hype(s.treasuryWei)} HYPE.`);
     lines.push(s.health);
     return lines.join("\n");
@@ -92,5 +102,7 @@ export const msg = {
     `Plumbline runner: error in ${role} (${context}): ${text}${repeats > 0 ? ` (${repeats} similar error(s) since the last alert)` : ""}`,
   errorCap: () => "Plumbline runner: 20 error alerts have been sent this hour, so further errors are only logged until the hour is up.",
   missedWindow: (label: string, why: string) => `Plumbline runner: the window ${label} ended over 30 minutes ago and no summary was saved. ${why}`,
+  sendFallback: (role: string, from: string, to: string, type: string) =>
+    `Plumbline runner: ${role}'s sends moved from the ${from} to the ${to} after a ${type} error. They try the preferred node again in about 30 seconds.`,
   keeperRestarted: (atSec: number, role: string) => `Plumbline runner: the ${role} bot restarted mid-window at ${new Date(atSec * 1000).toISOString().slice(11, 19)} UTC. Its counters were kept.`,
 };

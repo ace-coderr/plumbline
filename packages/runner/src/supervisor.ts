@@ -3,6 +3,7 @@ import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbl
 import { CAMPAIGNS, FAUCET, PLUMBUSD, schedule } from "./config.js";
 import { fetchWindowFigures } from "./windowData.js";
 import { windowLabel } from "./core/windowSummary.js";
+import { recordAlarm, summarizeAlarms, type AlarmBucket } from "./core/alarmlog.js";
 import { emptyErrorGate, errorType, gateError, lastFinishedWindow, shortError, type ErrorGateState } from "./core/errors.js";
 import { formatHealth, plumbusdLines, rpcLines, runnerLines, treasuryLine, walletLines, windowLines, type NodeResult } from "./core/health.js";
 import { makeClients, readBalances, takeFallbacks, tryEach } from "./chain.js";
@@ -48,6 +49,8 @@ export class Supervisor {
   private clients: PublicClient[] | null = null;
   /** True while a tick is running: a second tick (cron and alarm can coincide) is skipped, never run alongside. */
   private busy = false;
+  /** The rolling tick record, loaded once; saved when a minute completes or at once for a failure or a slow tick. */
+  private diag: AlarmBucket[] | null = null;
   private readonly redact: (s: string) => string;
   /** Alerts go one at a time, so two at once cannot both pass the once-an-hour gate. */
   private alerts: Promise<void> = Promise.resolve();
@@ -165,6 +168,19 @@ export class Supervisor {
         return this.report();
       case "/event":
         return this.onEvent((await req.json().catch(() => null)) as Record<string, unknown> | null);
+      case "/diag": {
+        const roles: Record<string, unknown> = {};
+        await Promise.all(
+          ROLES.map(async (r) => {
+            try {
+              roles[r] = (await (await this.env.ROLE.get(this.env.ROLE.idFromName(r)).fetch("https://role/diag")).json()) as unknown;
+            } catch {
+              roles[r] = { error: "unreachable" };
+            }
+          }),
+        );
+        return safeJson({ supervisor: await this.diagBuckets(), roles, restarts: (await this.get<unknown>("restartLog")) ?? [] });
+      }
       case "/alert-test": {
         const r = await sendTelegram({ token: this.env.TELEGRAM_BOT_TOKEN, chatId: this.env.TELEGRAM_CHAT_ID }, msg.test(), this.redact);
         return safeJson(r.ok ? { ok: true } : { ok: false, error: r.error });
@@ -216,6 +232,7 @@ export class Supervisor {
       lastDecision: (await this.get<unknown>("lastDecision")) ?? null,
       lastSummary: (await this.get<unknown>("lastSummary")) ?? null,
       alertFailures: (await this.get<unknown>("alertFailures")) ?? null,
+      alarms: summarizeAlarms(await this.diagBuckets(), now, 60),
       heartbeat: {
         configured: Boolean(this.env.HEALTHCHECK_URL),
         last: (await this.get<HeartbeatState>("heartbeat")) ?? null,
@@ -272,7 +289,14 @@ export class Supervisor {
     if (e.kind === "error" && typeof e.context === "string" && typeof e.text === "string") {
       await this.reportError(role, e.context.slice(0, 60), typeof e.type === "string" ? e.type.slice(0, 40) : "Error", e.text.slice(0, 300), Math.max(1, Math.min(1000, Number(e.count) || 1)));
     }
-    if (e.kind === "restarted" && typeof e.at === "number") await this.alert(`restarted:${role}`, msg.keeperRestarted(e.at, role));
+    if (e.kind === "restarted" && typeof e.at === "number") {
+      // Every restart is recorded for the daily summary; the alert about it is limited to one an hour per bot.
+      await this.logRestart(role, e.at);
+      await this.alert(`restarted:${role}`, msg.keeperRestarted(e.at, role));
+    }
+    if (e.kind === "send-fallback" && typeof e.from === "string" && typeof e.to === "string") {
+      await this.alert(`send-fallback:${role}`, msg.sendFallback(role, shortError(e.from, this.redact, 40), shortError(e.to, this.redact, 40), typeof e.type === "string" ? shortError(e.type, this.redact, 40) : "Error"));
+    }
     if (e.kind === "ended" && typeof e.reason === "string") {
       // A normal end needs nothing here: the window summary is built from the chain by the tick after the window.
       if (e.reason !== "the window ended" && e.reason !== "the supervisor said stop") {
@@ -280,6 +304,43 @@ export class Supervisor {
       }
     }
     return safeJson({ ok: true });
+  }
+
+  /** Notes a bot restart: who and when, newest last, the last 300 kept. */
+  private async logRestart(role: string, at: number): Promise<void> {
+    const log = (await this.get<{ role: string; at: number }[]>("restartLog")) ?? [];
+    log.push({ role, at });
+    await this.state.storage.put("restartLog", log.slice(-300));
+  }
+
+  /** What each bot saved about its current window: its counters and the restarts it noticed. */
+  private async roleSaved(): Promise<Record<string, { saved?: { runId: number; keeper: { probesSent: number; probesLanded: number; probesReverted: number }; restarts: number[] } }>> {
+    const out: Record<string, { saved?: { runId: number; keeper: { probesSent: number; probesLanded: number; probesReverted: number }; restarts: number[] } }> = {};
+    await Promise.all(
+      ROLES.map(async (r) => {
+        try {
+          out[r] = (await (await this.env.ROLE.get(this.env.ROLE.idFromName(r)).fetch("https://role/state")).json()) as (typeof out)[string];
+        } catch (err) {
+          this.log.warn("a bot's saved state could not be read", { role: r, err: errText(err) });
+          out[r] = {};
+        }
+      }),
+    );
+    return out;
+  }
+
+  /**
+   * Every restart noticed in the window: those the supervisor logged as they happened, plus any a bot saved that never reached the
+   * supervisor. The same restart seen both ways counts once.
+   */
+  private async windowRestarts(due: { start: number; end: number }, states: Awaited<ReturnType<Supervisor["roleSaved"]>>): Promise<{ role: string; at: number }[]> {
+    const inWindow = (at: number) => at >= due.start && at < due.end + 60;
+    const all = ((await this.get<{ role: string; at: number }[]>("restartLog")) ?? []).filter((r) => inWindow(r.at));
+    for (const [role, s] of Object.entries(states)) {
+      if (!s.saved || s.saved.runId !== due.start) continue;
+      for (const at of s.saved.restarts) if (inWindow(at) && !all.some((r) => r.role === role && Math.abs(r.at - at) <= 2)) all.push({ role, at });
+    }
+    return all.sort((a, b) => a.at - b.at);
   }
 
   /**
@@ -291,14 +352,13 @@ export class Supervisor {
     try {
       const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
       const keeperAddr = schedule.wallets.keeper;
-      const [chainRes, keeperState] = await Promise.all([
+      const [chainRes, states] = await Promise.all([
         keeperAddr ? fetchWindowFigures(fetch, keeperAddr, CAMPAIGNS, due.start, due.end) : Promise.resolve({ ok: false as const, reason: "no keeper address in the schedule" }),
-        this.env.ROLE.get(this.env.ROLE.idFromName("keeper")).fetch("https://role/state").then((r) => r.json() as Promise<{ saved?: { runId: number; keeper: { probesSent: number; probesLanded: number; probesReverted: number }; restarts: number[] } }>).catch((err) => {
-          this.log.warn("the keeper's saved counters could not be read", { err: errText(err) });
-          return {} as { saved?: undefined };
-        }),
+        this.roleSaved(),
       ]);
+      const keeperState = states.keeper ?? {};
       const saved = keeperState.saved && keeperState.saved.runId === due.start ? keeperState.saved : null;
+      const restarts = await this.windowRestarts(due, states);
       const balances = await tryEach(clients, (c) => readBalances(c, schedule));
       const stored = await this.get<{ day: string; balances: Record<string, string> }>("dayStart");
       const dayWei = stored ? spentToday({ day: stored.day, balances: parse(stored.balances) }, balances) : 0n;
@@ -340,7 +400,7 @@ export class Supervisor {
           minDays: Number.isFinite(minDays) ? minDays : 0,
           worst,
           treasuryWei,
-          restarts: saved?.restarts ?? [],
+          restarts,
           health: formatted.text,
         }),
       );
@@ -414,6 +474,8 @@ export class Supervisor {
   async tick(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
+    const t0 = Date.now();
+    let outcome = "ok";
     try {
       // The tick before this one: if it was long ago the cron has been missing, and that is not healthy.
       const previousTick = (await this.get<number>("lastTickAt")) ?? null;
@@ -423,12 +485,29 @@ export class Supervisor {
       } catch (err) {
         // An uncaught exception must not end the alarm chain: say so, and look again in 20 seconds.
         ticked = false;
+        outcome = errorType(err);
         await this.fail("tick", err);
         await this.state.storage.setAlarm(Date.now() + TICK_MS).catch(() => undefined);
       }
       await this.heartbeat(Math.floor(Date.now() / 1000), previousTick, ticked);
+      await this.recordDiag(t0, outcome);
     } finally {
       this.busy = false;
+    }
+  }
+
+  private async diagBuckets(): Promise<AlarmBucket[]> {
+    return (this.diag ??= (await this.get<AlarmBucket[]>("diag")) ?? []);
+  }
+
+  /** Adds this tick to the rolling alarm record (see core/alarmlog.ts). Saved when a minute completes, or at once for a failure or a slow tick. */
+  private async recordDiag(t0: number, outcome: string): Promise<void> {
+    try {
+      const buckets = await this.diagBuckets();
+      const r = recordAlarm(buckets, Math.floor(Date.now() / 1000), Date.now() - t0, 0, outcome, 8_000);
+      if (r.rolled || r.urgent) await this.state.storage.put("diag", buckets);
+    } catch (err) {
+      this.log.warn("could not save the tick record", { err: errText(err) });
     }
   }
 
