@@ -351,6 +351,10 @@ purpose, so the monitor's silence is the alarm. With no address set it does noth
 the project. If a ping fails (the service is down or slow), that is counted and reported like any other error, once an hour at most
 (`error in supervisor (heartbeat ping, ...)`); it never stops the bots. One attempt, a 5-second limit, no retries.
 
+**Warning: it must be a Secret.** In the Cloudflare dashboard, a variable of type *Text* is wiped by the next `wrangler deploy` (the deploy makes the project's
+files the source of truth), which silently stops the heartbeat. Secrets survive deploys. Always set `HEALTHCHECK_URL` with
+`pnpm runner put-secrets HEALTHCHECK_URL`, or choose the type *Secret* if you add it in the dashboard.
+
 **Set it up (browser, then terminal).**
 
 1. Browser: sign up at a heartbeat monitoring service and create a check with a period of 5 minutes and a grace time of about 10
