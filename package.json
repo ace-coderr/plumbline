@@ -33,6 +33,7 @@
     "check:derived": "tsx scripts/check-derived.ts",
     "check:all": "tsx scripts/check-all.ts",
     "runner": "tsx scripts/runner.ts",
+    "deploy:web": "tsx scripts/deploy-web.ts",
     "build:bots": "pnpm --filter @plumbline/shared build && pnpm --filter @plumbline/keeper build && pnpm --filter @plumbline/maker-bot build",
     "live:bots": "tsx scripts/live-bots.ts"
   },
