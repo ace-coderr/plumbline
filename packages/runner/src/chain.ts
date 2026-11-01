@@ -13,6 +13,7 @@ import type { PrivateKeyAccount } from "viem/accounts";
 import { ELYSIUM_TESTNET, RUNNER_WALLETS, elysiumTestnet, type BotsSchedule } from "@plumbline/shared";
 import type { Balances } from "./core/budget.js";
 import { errorType } from "./core/errors.js";
+import { FallbackWatch } from "./core/fallbacks.js";
 
 /** The two public nodes, each asked once per call: failure is reported, never retried in a loop. */
 export const RPC_URLS = [ELYSIUM_TESTNET.rpcUrl, "https://rpc-elysium-testnet.t.conduit.xyz"] as const;
@@ -35,7 +36,7 @@ export async function tryEach<T>(clients: PublicClient[], fn: (c: PublicClient) 
     try {
       const r = await fn(c);
       // With a private node first, an answer from a later node means the private one failed.
-      if (i > 0 && clients.length >= 3) fallbacks += 1;
+      if (i > 0 && clients.length >= 3) fallbackWatch.record(Date.now());
       return r;
     } catch (err) {
       last = err;
@@ -44,12 +45,10 @@ export async function tryEach<T>(clients: PublicClient[], fn: (c: PublicClient) 
   throw last;
 }
 
-let fallbacks = 0;
-/** How many reads fell back from the private node to a public one since this was last asked. */
-export function takeFallbacks(): number {
-  const n = fallbacks;
-  fallbacks = 0;
-  return n;
+const fallbackWatch = new FallbackWatch();
+/** True once, when the private node has failed three times within five minutes (a single failed read is a blip, not an alert). */
+export function privateNodeFailing(): boolean {
+  return fallbackWatch.reached(Date.now());
 }
 
 const balanceAbi = parseAbi(["function getEthBalance(address) view returns (uint256)"]);

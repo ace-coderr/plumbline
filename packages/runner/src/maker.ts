@@ -2,7 +2,7 @@ import { encodeFunctionData, parseUnits, type Address, type PublicClient } from 
 import { ELYSIUM_TESTNET, plumbQuoteAbi, type MakerSettings } from "@plumbline/shared";
 import { buildQuote } from "../../maker-bot/src/pricing.js";
 import { HL_INFO_URL, MAX_REFERENCE_AGE_MS, PLUMBUSD, WHYPE } from "./config.js";
-import type { Signer } from "./chain.js";
+import { tryEach, type Signer } from "./chain.js";
 import { errText, type Logger } from "./core/log.js";
 
 /**
@@ -48,6 +48,8 @@ export interface MakerCtx {
   referenceCoin: string;
   signer: Signer;
   client: PublicClient;
+  /** The bot's nodes in order; the inventory read tries each in turn. Defaults to just `client`. */
+  clients?: PublicClient[];
   state: MakerState;
   log: Logger;
   /** Tells the supervisor about a failed call or send (it dedupes and rate-limits). */
@@ -77,14 +79,16 @@ async function pollReference(c: MakerCtx): Promise<void> {
 
 async function readInventory(c: MakerCtx): Promise<void> {
   try {
-    const [b, q] = await c.client.multicall({
-      allowFailure: false,
-      multicallAddress: ELYSIUM_TESTNET.multicall3,
-      contracts: [
-        { address: c.vault, abi: plumbQuoteAbi, functionName: "freeBalance", args: [WHYPE.address] },
-        { address: c.vault, abi: plumbQuoteAbi, functionName: "freeBalance", args: [PLUMBUSD.address] },
-      ],
-    });
+    const [b, q] = await tryEach(c.clients ?? [c.client], (cl) =>
+      cl.multicall({
+        allowFailure: false,
+        multicallAddress: ELYSIUM_TESTNET.multicall3,
+        contracts: [
+          { address: c.vault, abi: plumbQuoteAbi, functionName: "freeBalance", args: [WHYPE.address] },
+          { address: c.vault, abi: plumbQuoteAbi, functionName: "freeBalance", args: [PLUMBUSD.address] },
+        ],
+      }),
+    );
     c.state.freeBase = b;
     c.state.freeQuote = q;
     c.state.invAt = Date.now();
