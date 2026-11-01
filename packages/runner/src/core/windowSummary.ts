@@ -12,6 +12,8 @@ export interface ChainTx {
   gasUsed: string;
   gasPrice: string;
   timeStamp: string;
+  /** The transaction's calldata, when the explorer gave it: a probe's carries the campaign id. */
+  input?: string;
 }
 
 export interface ChainLog {
@@ -46,6 +48,8 @@ export interface WindowFigures {
   revertedGasWei: bigint;
   /** Landed does not equal sent minus reverted: some probe is unaccounted for. */
   mismatch: boolean;
+  /** Probes by campaign id, with what they cost in gas. Empty if the transactions carried no calldata. */
+  perCampaign: { id: number; sent: number; reverted: number; costWei: bigint }[];
 }
 
 const GRACE_SECONDS = 60;
@@ -68,6 +72,16 @@ export function summarizeWindow(i: WindowInput): WindowFigures {
   const reverted = probes.filter((t) => t.isError === "1");
   const wei = (t: ChainTx) => BigInt(t.gasUsed) * BigInt(t.gasPrice);
   const sum = (ts: ChainTx[], f: (t: ChainTx) => bigint) => ts.reduce((a, t) => a + f(t), 0n);
+  const per = new Map<number, { id: number; sent: number; reverted: number; costWei: bigint }>();
+  for (const t of probes) {
+    if (!t.input || t.input.length < 74) continue;
+    const id = Number(BigInt(`0x${t.input.slice(10, 74)}`));
+    const e = per.get(id) ?? { id, sent: 0, reverted: 0, costWei: 0n };
+    e.sent += 1;
+    if (t.isError === "1") e.reverted += 1;
+    e.costWei += wei(t);
+    per.set(id, e);
+  }
   const sent = probes.length;
   return {
     probesSent: sent,
@@ -81,6 +95,7 @@ export function summarizeWindow(i: WindowInput): WindowFigures {
     revertedGasUsed: sum(reverted, (t) => BigInt(t.gasUsed)),
     revertedGasWei: sum(reverted, wei),
     mismatch: landed.size !== sent - reverted.length,
+    perCampaign: [...per.values()].sort((a, b) => a.id - b.id),
   };
 }
 

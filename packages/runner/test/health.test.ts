@@ -54,7 +54,7 @@ describe("health lines", () => {
   });
 
   it("window: consistent figures pass; a mismatch, a differing tally and an unreadable chain fail", () => {
-    const f = { probesSent: 100, probesLanded: 90, probesReverted: 10, revertedPct: 10, settles: 5, settlesFailed: 0, gasUsedTotal: 0n, gasWei: 0n, revertedGasUsed: 0n, revertedGasWei: 0n, mismatch: false };
+    const f = { probesSent: 100, probesLanded: 90, probesReverted: 10, revertedPct: 10, settles: 5, settlesFailed: 0, gasUsedTotal: 0n, gasWei: 0n, revertedGasUsed: 0n, revertedGasWei: 0n, mismatch: false, perCampaign: [] };
     assert.equal(windowLines(f, null)[0]!.ok, true);
     assert.equal(windowLines(f, { sent: 101, landed: 90, reverted: 10 })[0]!.ok, true, "up to two in flight at the end is fine");
     assert.equal(windowLines(f, { sent: 40, landed: 30, reverted: 10 })[0]!.ok, false);
