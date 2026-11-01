@@ -5,6 +5,7 @@ import { tryEach, type Signer } from "./chain.js";
 import { shortHash } from "./core/redact.js";
 import { errText, type Logger } from "./core/log.js";
 import { pollable, settleDue, type Track } from "./core/keeper.js";
+import { allowedTracks, chargeOther, countOtherProbe, emptyLedger, isOther, ledgerFor, mayProbeOther, remainingWei, type OtherLedger } from "./core/foreign.js";
 
 /**
  * One keeper burst, run from a Durable Object alarm. A burst polls the probe gate for a few seconds
@@ -20,7 +21,9 @@ export interface KeeperState {
   quietUntil: Record<number, number>;
   /** A node that just refused us (rate limit) is left alone until this time, ms. */
   coolUntil: number[];
-  pending: { hash: Hash; id: number; at: number }[];
+  pending: { hash: Hash; id: number; at: number; /** A probe of another person's campaign: its cost goes against the other-campaigns budget. */ other?: boolean }[];
+  /** Today's budget for probing campaigns the runner did not open. */
+  other: OtherLedger;
   pollsOk: number;
   pollsFailed: number;
   probesSent: number;
@@ -42,6 +45,7 @@ export const newKeeperState = (): KeeperState => ({
   quietUntil: {},
   coolUntil: [0, 0, 0],
   pending: [],
+  other: emptyLedger(""),
   pollsOk: 0,
   pollsFailed: 0,
   probesSent: 0,
@@ -92,6 +96,12 @@ export interface KeeperCtx {
   log: Logger;
   /** Tells the supervisor about a failed call or send (it dedupes and rate-limits). */
   report?: (context: string, err: unknown) => void;
+  /** The runner's own wallet addresses, lower case. A campaign opened by anyone else is "other". With none given, every campaign is the runner's own. */
+  own?: ReadonlySet<string>;
+  /** The daily budget for probing other campaigns, wei. */
+  otherBudgetWei?: bigint;
+  /** Called once, when the other-campaigns budget is used up for the day. */
+  onOtherBudget?: (ledger: OtherLedger) => void;
 }
 
 const BURST_MS = 3_500;
@@ -121,7 +131,7 @@ async function refresh(c: KeeperCtx, nowMs: number): Promise<number> {
 
   c.state.tracks = ids.map((id, i) => {
     const t = reads[2 * i] as { epochLength: bigint; minProbeInterval: number };
-    const s = reads[2 * i + 1] as { startTime: bigint; numEpochs: number; settledEpochs: number; lastProbeAt: bigint };
+    const s = reads[2 * i + 1] as { creator?: string; startTime: bigint; numEpochs: number; settledEpochs: number; lastProbeAt: bigint };
     return {
       id,
       startTime: Number(s.startTime),
@@ -130,6 +140,7 @@ async function refresh(c: KeeperCtx, nowMs: number): Promise<number> {
       minProbeInterval: t.minProbeInterval,
       settledEpochs: s.settledEpochs,
       lastProbeAt: Number(s.lastProbeAt),
+      creator: typeof (s as { creator?: string }).creator === "string" ? (s as { creator: string }).creator.toLowerCase() : undefined,
     };
   });
   c.state.refreshedAt = nowMs;
@@ -155,9 +166,30 @@ async function settlePending(c: KeeperCtx): Promise<number> {
     }
     if (r.status === "success") c.state.probesLanded += 1;
     else c.state.probesReverted += 1;
+    // What a probe of another campaign really cost goes against that budget.
+    if (p.other) chargeOther(c.state.other, p.id, r.gasUsed * r.effectiveGasPrice);
   }
   c.state.pending = keep;
   return used;
+}
+
+/** Stops other campaigns for the day, and says so once, when the budget is used up. */
+function checkOtherBudget(c: KeeperCtx): void {
+  const st = c.state;
+  // Without the runner's own addresses nothing can be told apart, so nothing is ever called "other".
+  if (c.otherBudgetWei === undefined || c.own === undefined) return;
+  // Nothing is stopped, or announced, unless some campaign really is another person's.
+  if (!st.tracks.some((t) => isOther(t.creator, c.own as ReadonlySet<string>)) && st.other.spentWei === 0n && Object.keys(st.other.campaigns).length === 0) return;
+  const inFlight = st.pending.filter((p) => p.other).length;
+  if (!st.other.stopped && remainingWei(st.other, c.otherBudgetWei, inFlight) <= 0n) st.other.stopped = true;
+  if (st.other.stopped && !st.other.alerted) {
+    st.other.alerted = true;
+    try {
+      c.onOtherBudget?.(st.other);
+    } catch {
+      // A broken alert hook must never stop a probe.
+    }
+  }
 }
 
 export async function keeperBurst(c: KeeperCtx): Promise<void> {
@@ -166,8 +198,10 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
   st.bursts += 1;
   let used = 0;
   try {
+    st.other = ledgerFor(st.other, new Date(t0).toISOString().slice(0, 10));
     if (t0 - st.refreshedAt > 5_000) used += await refresh(c, t0);
     if (st.pending.length) used += await settlePending(c);
+    checkOtherBudget(c);
 
     const nowSec = () => Math.floor(Date.now() / 1000);
     if (t0 - st.settleCheckedAt > 15_000) {
@@ -195,7 +229,7 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
     // is far over what a shared Cloudflare address is allowed.)
     let rounds = 0;
     while (Date.now() - t0 < BURST_MS && used < SUBREQUEST_BUDGET) {
-      const targets = pollable(st.tracks, nowSec(), st.quietUntil, Date.now());
+      const targets = pollable(c.own ? allowedTracks(st.tracks, c.own, st.other) : st.tracks, nowSec(), st.quietUntil, Date.now());
       if (targets.length === 0) {
         await sleep(400);
         continue;
@@ -230,12 +264,19 @@ export async function keeperBurst(c: KeeperCtx): Promise<void> {
       for (const id of opened) {
         // Re-checked after the polls came back: another poll in this round may already have sent.
         if (Date.now() < (st.quietUntil[id] ?? 0)) continue;
+        // Another person's campaign is probed only while its daily budget lasts. The runner's own campaign is never held back here.
+        const other = c.own !== undefined && c.otherBudgetWei !== undefined && isOther(st.tracks.find((t) => t.id === id)?.creator, c.own);
+        if (other && !mayProbeOther(st.other, c.otherBudgetWei as bigint, st.pending.filter((p) => p.other).length)) {
+          checkOtherBudget(c);
+          continue;
+        }
         st.quietUntil[id] = Date.now() + 2_000;
         try {
           const hash = await c.signer.send(CAMPAIGNS, encodeFunctionData({ abi: plumbCampaignsAbi, functionName: "probe", args: [BigInt(id)] }), 450_000n);
           st.probesSent += 1;
           st.lastProbeAt = Date.now();
-          st.pending.push({ hash, id, at: Date.now() });
+          st.pending.push({ hash, id, at: Date.now(), ...(other ? { other: true } : {}) });
+          if (other) countOtherProbe(st.other, id);
           c.log.info("probe sent", { id, tx: shortHash(hash) });
           used += 1;
         } catch (err) {

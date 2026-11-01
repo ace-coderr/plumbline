@@ -109,6 +109,8 @@ describe("the window summary comes from chain data", () => {
       treasuryWei: 1_000_000_000_000_000_000n,
       restarts: [{ role: "keeper", at: Date.parse("2026-10-27T15:21:12Z") / 1000 }],
       health: "Health: all checks passed",
+      others: [],
+      otherBudgetHype: 0.05,
     });
     const [line1, ...rest] = text.split("\n");
     assert.match(line1!, /window 13:00–17:00 UTC: 755 probes sent, 688 landed, 67 reverted \(8\.9%\), 58 settles\./);

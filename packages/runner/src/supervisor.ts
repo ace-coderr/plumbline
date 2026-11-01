@@ -1,12 +1,12 @@
 import { erc20Abi, type PublicClient } from "viem";
-import { RUNNER_WALLETS, nextWindow, utcDay, windowAt, type Span } from "@plumbline/shared";
+import { RUNNER_WALLETS, nextWindow, plumbCampaignsAbi, utcDay, windowAt, type Span } from "@plumbline/shared";
 import { CAMPAIGNS, FAUCET, PLUMBUSD, schedule } from "./config.js";
 import { fetchWindowFigures } from "./windowData.js";
 import { windowLabel } from "./core/windowSummary.js";
 import { recordAlarm, summarizeAlarms, type AlarmBucket } from "./core/alarmlog.js";
 import { emptyErrorGate, errorType, gateError, lastFinishedWindow, shortError, type ErrorGateState } from "./core/errors.js";
 import { formatHealth, plumbusdLines, rpcLines, runnerLines, treasuryLine, walletLines, windowLines, type NodeResult } from "./core/health.js";
-import { makeClients, readBalances, takeFallbacks, tryEach } from "./chain.js";
+import { makeClients, privateNodeFailing, readBalances, tryEach } from "./chain.js";
 import { ensureCampaign } from "./campaign.js";
 import { redactorFor, type Env } from "./env.js";
 import { decide, spentToday, toWei, type Balances, type DayStart, type Halt } from "./core/budget.js";
@@ -294,6 +294,16 @@ export class Supervisor {
       await this.logRestart(role, e.at);
       await this.alert(`restarted:${role}`, msg.keeperRestarted(e.at, role));
     }
+    if (e.kind === "other-budget" && typeof e.day === "string" && Array.isArray(e.campaigns)) {
+      const campaigns = (e.campaigns as { id?: unknown; probes?: unknown; costWei?: unknown }[]).slice(0, 20).map((c) => ({ id: Number(c.id) || 0, probes: Number(c.probes) || 0 }));
+      let spent = 0n;
+      try {
+        spent = BigInt(String(e.spentWei ?? "0"));
+      } catch {
+        // a bad number from a bot is shown as zero
+      }
+      await this.alert(`other-budget:${e.day.slice(0, 10)}`, msg.otherBudget(spent, schedule.otherCampaigns.dailyProbeBudgetHype, campaigns));
+    }
     if (e.kind === "send-fallback" && typeof e.from === "string" && typeof e.to === "string") {
       await this.alert(`send-fallback:${role}`, msg.sendFallback(role, shortError(e.from, this.redact, 40), shortError(e.to, this.redact, 40), typeof e.type === "string" ? shortError(e.type, this.redact, 40) : "Error"));
     }
@@ -304,6 +314,22 @@ export class Supervisor {
       }
     }
     return safeJson({ ok: true });
+  }
+
+  /** Of the campaigns the keeper probed, those the runner did not open: one read of each one's creator. Null if that cannot be read. */
+  private async otherCampaigns(per: { id: number; sent: number; costWei: bigint }[], clients: PublicClient[]): Promise<{ id: number; probes: number; costWei: bigint }[] | null> {
+    if (per.length === 0) return [];
+    try {
+      const reads = await tryEach(clients, (c) =>
+        c.multicall({ allowFailure: false, contracts: per.map((p) => ({ address: CAMPAIGNS, abi: plumbCampaignsAbi, functionName: "state", args: [BigInt(p.id)] }) as const) }),
+      );
+      const own = new Set<string>();
+      for (const a of Object.values(schedule.wallets)) if (typeof a === "string") own.add(a.toLowerCase());
+      return per.flatMap((p, i) => (own.has(String((reads[i] as { creator: string }).creator).toLowerCase()) ? [] : [{ id: p.id, probes: p.sent, costWei: p.costWei }]));
+    } catch (err) {
+      this.log.warn("could not tell other campaigns apart", { err: errText(err) });
+      return null;
+    }
   }
 
   /** Notes a bot restart: who and when, newest last, the last 300 kept. */
@@ -372,6 +398,7 @@ export class Supervisor {
       const treasuryRead = await treasuryBalance({ clients, schedule });
       const treasuryWei = treasuryRead ?? 0n;
       const f = chainRes.ok ? chainRes.figures : null;
+      const others = f ? await this.otherCampaigns(f.perCampaign, clients) : null;
       // The health block reuses what this summary has just read (balances, treasury, the window's figures) and adds
       // five cheap reads: each node's block number and the two PLUMBUSD balances.
       const [nodes, plum, halt, lastTickAt, killed] = await Promise.all([
@@ -401,6 +428,8 @@ export class Supervisor {
           worst,
           treasuryWei,
           restarts,
+          others,
+          otherBudgetHype: schedule.otherCampaigns.dailyProbeBudgetHype,
           health: formatted.text,
         }),
       );
@@ -641,7 +670,7 @@ export class Supervisor {
     } catch (err) {
       this.log.warn("balances not readable", { err: errText(err) });
     }
-    if (takeFallbacks() > 0) await this.alert("fallback", msg.rpcFallback());
+    if (privateNodeFailing()) await this.alert("fallback", msg.rpcFallback());
     const nowWindow = windowAt(schedule, now);
     if (balances && nowWindow && !killed) balances = await this.topUp(now, nowWindow, balances);
     const storedDay = await this.get<{ day: string; balances: Record<string, string> }>("dayStart");

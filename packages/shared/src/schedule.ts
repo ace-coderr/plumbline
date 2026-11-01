@@ -57,6 +57,8 @@ export interface BotsSchedule {
   windows: ScheduleWindow[];
   /** Most HYPE the runner wallets may spend in one UTC day, in HYPE. */
   dailyHypeCap: number;
+  /** Probing campaigns that the runner's own wallets did not open: a separate daily budget, in HYPE, so they cannot use up the cap. */
+  otherCampaigns: { dailyProbeBudgetHype: number };
   /** Stop everything when a wallet holds less than this, in HYPE. */
   floorHype: Record<RunnerWallet, number>;
   /** Public addresses of the runner wallets; null where the wallet has not been created yet. */
@@ -124,7 +126,7 @@ function parseMaker(v: unknown, where: string): MakerSettings {
 /** Validate a parsed bots.schedule.json. Strict: an unknown or missing field is an error, never ignored. */
 export function parseSchedule(raw: unknown): BotsSchedule {
   if (!isObj(raw)) throw new Error("schedule: must be an object");
-  only(raw, ["enabled", "windows", "dailyHypeCap", "floorHype", "wallets", "vaults", "campaign", "maker", "referenceCoin", "treasury", "topUp", "alerts"], "schedule");
+  only(raw, ["enabled", "windows", "dailyHypeCap", "otherCampaigns", "floorHype", "wallets", "vaults", "campaign", "maker", "referenceCoin", "treasury", "topUp", "alerts"], "schedule");
   if (typeof raw.enabled !== "boolean") throw new Error("schedule.enabled: must be true or false");
   if (!Array.isArray(raw.windows) || raw.windows.length > 6) throw new Error("schedule.windows: must be a list of at most 6");
   const windows = raw.windows.map((w, i): ScheduleWindow => {
@@ -180,12 +182,17 @@ export function parseSchedule(raw: unknown): BotsSchedule {
   const belowDays = num(tu.belowDays, "schedule.topUp.belowDays", 0.5, 60);
   const toDays = num(tu.toDays, "schedule.topUp.toDays", 1, 120);
   if (toDays <= belowDays) throw new Error("schedule.topUp.toDays: must be more than belowDays");
+  if (!isObj(raw.otherCampaigns)) throw new Error("schedule.otherCampaigns: must be an object");
+  only(raw.otherCampaigns, ["dailyProbeBudgetHype"], "schedule.otherCampaigns");
   if (!isObj(raw.alerts)) throw new Error("schedule.alerts: must be an object");
   only(raw.alerts, ["repeatMinutes", "faucetLowPlumbusd", "sponsorLowPlumbusd"], "schedule.alerts");
   return {
     enabled: raw.enabled,
     windows,
     dailyHypeCap: num(raw.dailyHypeCap, "schedule.dailyHypeCap", 0, 5),
+    otherCampaigns: {
+      dailyProbeBudgetHype: num(raw.otherCampaigns.dailyProbeBudgetHype, "schedule.otherCampaigns.dailyProbeBudgetHype", 0, 5),
+    },
     floorHype,
     wallets,
     vaults: { a: addr(raw.vaults.a, "schedule.vaults.a"), b: addr(raw.vaults.b, "schedule.vaults.b") },

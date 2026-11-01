@@ -1,9 +1,11 @@
 import type { PublicClient } from "viem";
 import type { RunnerWallet } from "@plumbline/shared";
 import { schedule } from "./config.js";
-import { Signer, makeClients, takeFallbacks, type FallbackEvent } from "./chain.js";
+import { Signer, makeClients, privateNodeFailing, type FallbackEvent } from "./chain.js";
 import { accountFor, redactorFor, type Env } from "./env.js";
 import { errorType } from "./core/errors.js";
+import { parseLedger, serialiseLedger, type OtherLedger } from "./core/foreign.js";
+import { toWei } from "./core/budget.js";
 import { recordAlarm, summarizeAlarms, type AlarmBucket } from "./core/alarmlog.js";
 import { errText, makeLogger, setRedactor, withFields, type Logger, safeJson } from "./core/log.js";
 import { cancelQuote, makerTick, newMakerState, type MakerState } from "./maker.js";
@@ -83,6 +85,8 @@ export class Role {
   private reported = new Map<string, { lastTold: number; pending: number }>();
   private tells: Promise<void>[] = [];
   private roleName: string = "role";
+  /** The keeper's other-campaigns ledger as last saved. */
+  private savedOther = "";
   /** How each alarm went, a bucket a minute, and when the next alarm was set for. */
   private diag: AlarmBucket[] = [];
   private expectedAt = 0;
@@ -97,6 +101,27 @@ export class Role {
     this.log = makeLogger(redact);
   }
 
+  /** Today's other-campaigns ledger from storage (it outlives a window: the budget is per UTC day). */
+  private async loadOther(): Promise<void> {
+    const day = new Date().toISOString().slice(0, 10);
+    this.keeper.other = parseLedger(await this.state.storage.get<ReturnType<typeof serialiseLedger>>("foreign"), day);
+    this.savedOther = JSON.stringify(serialiseLedger(this.keeper.other));
+  }
+
+  private async saveOther(): Promise<void> {
+    const sig = JSON.stringify(serialiseLedger(this.keeper.other));
+    if (sig === this.savedOther) return;
+    this.savedOther = sig;
+    await this.state.storage.put("foreign", serialiseLedger(this.keeper.other));
+  }
+
+  /** The runner's own wallet addresses, lower case: a campaign opened by any other address is "other". */
+  private ownAddresses(): Set<string> {
+    const out = new Set<string>();
+    for (const a of Object.values(schedule.wallets)) if (typeof a === "string") out.add(a.toLowerCase());
+    return out;
+  }
+
   private async savedStats(): Promise<RoleStats | null> {
     return (await this.state.storage.get<RoleStats>("stats")) ?? null;
   }
@@ -105,6 +130,7 @@ export class Role {
   private async onBoot(cfg: RoleConfig): Promise<void> {
     this.booted = true;
     this.diag = (await this.state.storage.get<AlarmBucket[]>("diag")) ?? [];
+    await this.loadOther();
     const saved = await this.savedStats();
     if (!saved || saved.runId !== cfg.runId) return;
     restoreKeeper(this.keeper, saved.keeper);
@@ -123,6 +149,7 @@ export class Role {
   /** Writes the counters when they changed (a maker's only every 30 s: it sends once a second). */
   private async saveStats(cfg: RoleConfig, force = false): Promise<void> {
     const isKeeper = cfg.role === "keeper";
+    if (isKeeper) await this.saveOther();
     if (!isKeeper && !force && Date.now() - this.lastMakerSaveAt < 30_000) return;
     const keeper = saveKeeper(this.keeper);
     const maker = { ticks: this.maker.ticks, sent: this.maker.sent, failed: this.maker.failed };
@@ -146,6 +173,7 @@ export class Role {
       if (cur?.running && cur.runId > body.runId) return safeJson({ ok: false, reason: "a newer run is active" }, { status: 409 });
       this.maker = newMakerState();
       this.keeper = newKeeperState();
+      await this.loadOther();
       this.signer = null;
       this.lastCheck = Date.now();
       this.lastOk = Date.now();
@@ -235,6 +263,7 @@ export class Role {
       referenceCoin: schedule.referenceCoin,
       signer: this.signer,
       client: clients[0] as PublicClient,
+      clients,
       state: this.maker,
       log: withFields(this.log, { bot: role }),
       report: this.report,
@@ -331,7 +360,19 @@ export class Role {
         if (!account) return this.finish("KEEPER_KEY is not set");
         const clients = (this.clients ??= makeClients(this.env.CONDUIT_RPC_URL));
         this.signer ??= new Signer(account, clients, this.signerOptions(clients));
-        await keeperBurst({ signer: this.signer, clients, state: this.keeper, log: withFields(this.log, { bot: "keeper" }), report: this.report });
+        await keeperBurst({
+          signer: this.signer,
+          clients,
+          state: this.keeper,
+          log: withFields(this.log, { bot: "keeper" }),
+          report: this.report,
+          own: this.ownAddresses(),
+          otherBudgetWei: toWei(schedule.otherCampaigns.dailyProbeBudgetHype),
+          onOtherBudget: (l: OtherLedger) =>
+            void this.tells.push(
+              this.tell({ kind: "other-budget", day: l.day, spentWei: l.spentWei.toString(), campaigns: Object.entries(l.campaigns).map(([id, v]) => ({ id: Number(id), probes: v.probes, costWei: v.costWei.toString() })) }),
+            ),
+        });
         if (this.keeper.failed >= MAX_KEEPER_FAILURES) return this.finish("too many failures");
         next = Date.now() + 100;
       } else {
@@ -355,7 +396,7 @@ export class Role {
     await this.saveStats(cfg);
     await Promise.allSettled(this.tells.splice(0));
     // A read or send that had to leave the private node: say so, at most every five minutes.
-    if (takeFallbacks() > 0 && Date.now() - this.lastFallbackTold > 300_000) {
+    if (Date.now() - this.lastFallbackTold > 300_000 && privateNodeFailing()) {
       this.lastFallbackTold = Date.now();
       await this.tell({ kind: "fallback", role: cfg.role });
     }

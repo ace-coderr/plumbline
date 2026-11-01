@@ -1,7 +1,8 @@
 {
   "enabled": true,
   "windows": [{ "startUtc": "13:00", "minutes": 240 }],
-  "dailyHypeCap": 0.13,
+  "dailyHypeCap": 0.20,
+  "otherCampaigns": { "dailyProbeBudgetHype": 0.05 },
   "floorHype": {
     "keeper": 0.0003,
     "quoterA": 0.0003,

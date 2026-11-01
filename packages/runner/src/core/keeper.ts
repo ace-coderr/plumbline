@@ -10,6 +10,8 @@ export interface Track {
   minProbeInterval: number;
   settledEpochs: number;
   lastProbeAt: number;
+  /** Who opened the campaign (lower case), when it is known. */
+  creator?: string;
 }
 
 export const endOfTrack = (t: Track): number => t.startTime + t.numEpochs * t.epochLength;

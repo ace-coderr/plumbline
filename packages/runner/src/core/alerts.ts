@@ -53,6 +53,16 @@ export function restartLine(restarts: { role: string; at: number }[]): string {
   return `Bot restarts in the window (${restarts.length}): ${parts.join("; ")} UTC.`;
 }
 
+/** "Other people's campaigns probed in the window (3, 507 probes, 0.0068 HYPE of the 0.05 daily budget): #13 170 probes 0.0023 HYPE; ..." */
+export function othersLine(others: { id: number; probes: number; costWei: bigint }[] | null, budgetHype: number): string {
+  if (others === null) return "Other people's campaigns: could not be told apart from the runner's own this time.";
+  if (others.length === 0) return "Other people's campaigns probed in the window: none.";
+  const probes = others.reduce((a, o) => a + o.probes, 0);
+  const cost = others.reduce((a, o) => a + o.costWei, 0n);
+  const list = others.map((o) => `#${o.id} ${o.probes} probes ${(Number(o.costWei) / 1e18).toFixed(4)} HYPE`).join("; ");
+  return `Other people's campaigns probed in the window (${others.length}, ${probes} probes, ${(Number(cost) / 1e18).toFixed(4)} HYPE of the ${budgetHype} daily budget): ${list}.`;
+}
+
 const hype = (wei: bigint | number): string => (typeof wei === "bigint" ? Number(wei) / 1e18 : wei).toFixed(4);
 
 /** The one-line forms of every alert, so wording lives in one place and tests can see it. */
@@ -64,7 +74,7 @@ export const msg = {
   capHit: (reason: string) => `Plumbline runner: the daily HYPE cap was reached, so the bots stopped for today. ${reason}`,
   walletUnderFloor: (reason: string) => `Plumbline runner: a wallet is under its floor, so the bots stopped. ${reason}`,
   windowFailed: (role: string, reason: string) => `Plumbline runner: ${role} ended early in the window: ${reason}`,
-  rpcFallback: () => `Plumbline runner: the private RPC node failed; the runner is using the public nodes, which rate-limit.`,
+  rpcFallback: () => `Plumbline runner: the private RPC node failed three times in five minutes, so reads and sends are going to the public nodes, which rate-limit.`,
   kill: () => `Plumbline runner: the kill switch was used. All bots are stopped until /resume.`,
   resumed: () => `Plumbline runner: /resume was used. The kill switch is off.`,
   faucetLow: (plumbusd: number, lowAt: number) => `Plumbline runner: the faucet pool holds ${Math.floor(plumbusd).toLocaleString("en-US")} PLUMBUSD, under ${lowAt.toLocaleString("en-US")}. Mint more from the deployer.`,
@@ -84,6 +94,9 @@ export const msg = {
     restarts: { role: string; at: number }[];
     /** The Health block (core/health.ts formatHealth), shown last. */
     health: string;
+    /** Probes of campaigns the runner did not open, in the window, and the daily budget for them; null if they could not be told apart. */
+    others: { id: number; probes: number; costWei: bigint }[] | null;
+    otherBudgetHype: number;
   }) => {
     const w = s.window;
     const head = w
@@ -92,6 +105,7 @@ export const msg = {
     const lines = [head];
     if (w?.mismatch) lines.push("Check: landed does not equal sent minus reverted, so some probe is unaccounted for.");
     lines.push(restartLine(s.restarts));
+    lines.push(othersLine(s.others, s.otherBudgetHype));
     lines.push(`HYPE spent today (the whole UTC day so far, all six runner wallets, by balance change): ${hype(s.dayWei)}. Least funding left: ${s.worst}, ${s.minDays.toFixed(1)} days. Treasury ${hype(s.treasuryWei)} HYPE.`);
     lines.push(s.health);
     return lines.join("\n");
@@ -104,5 +118,7 @@ export const msg = {
   missedWindow: (label: string, why: string) => `Plumbline runner: the window ${label} ended over 30 minutes ago and no summary was saved. ${why}`,
   sendFallback: (role: string, from: string, to: string, type: string) =>
     `Plumbline runner: ${role}'s sends moved from the ${from} to the ${to} after a ${type} error. They try the preferred node again in about 30 seconds.`,
+  otherBudget: (spentWei: bigint, budgetHype: number, campaigns: { id: number; probes: number }[]) =>
+    `Plumbline runner: the ${budgetHype} HYPE daily budget for probing other people's campaigns is used up (${(Number(spentWei) / 1e18).toFixed(4)} HYPE spent: ${campaigns.map((c) => `#${c.id} ${c.probes} probes`).join(", ")}). Those campaigns are not probed again until tomorrow (UTC). The runner's own campaign is still probed.`,
   keeperRestarted: (atSec: number, role: string) => `Plumbline runner: the ${role} bot restarted mid-window at ${new Date(atSec * 1000).toISOString().slice(11, 19)} UTC. Its counters were kept.`,
 };
