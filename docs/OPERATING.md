@@ -294,7 +294,7 @@ installed (`pnpm install`), a `.env` with your local keys, and a little testnet 
 16. At the first window the supervisor opens a campaign, starts the bots, and sends the summary a minute after the window ends.
     To try it earlier, set a window a few minutes ahead, redeploy, and watch `pnpm check:all`.
 
-The website is separate (it is hosted on Vercel and reads the chain from the browser). It does not need Cloudflare.
+The website is separate: a static site served by its own Cloudflare Worker (`plumbline-web`) that reads the chain from the browser; see [section 12](#12-deploy-the-website). It needs none of the runner's secrets.
 
 ---
 
@@ -385,3 +385,30 @@ what the bots' alarms looked like at the time:
 
 If sends to the preferred node fail, a bot moves to the next node and says so (the alert above), then returns after about 30 seconds. A send is
 signed once and retried at most once with the same signed bytes, so a lost reply can never become a second transaction.
+
+---
+
+## 12. Deploy the website
+
+The website is plain files (no server code). Cloudflare serves them from a Worker called `plumbline-web`, which is separate from the
+runner Worker and has no secrets. Its settings are in `apps/web/wrangler.jsonc`; a refresh or shared link to any page (`/status`,
+`/scorecard`, `/verify`, `/faucet`, `/try`, ...) returns the app instead of a 404.
+
+**Deploy by hand (one command).** In a terminal tab, in the project folder, after `npx wrangler login` has been done once on this computer
+(approve the browser tab straight away):
+
+```bash
+pnpm deploy:web
+```
+
+It builds the shared package, builds the site, and publishes it, then prints the address. If your Cloudflare login has several accounts,
+set `CLOUDFLARE_ACCOUNT_ID` in your terminal first. It never touches `plumbline-runner` or any secret.
+
+**Automatic deploys (optional, browser).** In the Cloudflare dashboard open Workers & Pages, then `plumbline-web` → Settings → Builds →
+Connect, and pick the GitHub repository and the `main` branch. Cloudflare asks you to authorise its GitHub app; nothing secret is pasted
+anywhere. Use the build command `pnpm --filter @plumbline/shared build && pnpm --filter @plumbline/web build:static`, the deploy command
+`npx wrangler deploy` with root directory `apps/web`, and set the variable `PUBLIC_URL` to the site's address. Until that is set up,
+use `pnpm deploy:web`.
+
+**The site's address** is `SITE_URL` in `packages/shared/src/links.ts`. If the address ever changes (for example a custom domain), change
+it there and in the README links, then deploy again.

@@ -1,8 +1,8 @@
-**Live site: [plumbline-elysium.vercel.app](https://plumbline-elysium.vercel.app)** · a static site whose
+**Live site: [plumbline-web.plumbline-app.workers.dev](https://plumbline-web.plumbline-app.workers.dev)** · a static site whose
 browser reads the chain itself; wallet actions send real testnet transactions ·
-[how it works](https://plumbline-elysium.vercel.app/how-it-works) ·
-[try it](https://plumbline-elysium.vercel.app/try) · [faucet](https://plumbline-elysium.vercel.app/faucet) ·
-[status](https://plumbline-elysium.vercel.app/status)
+[how it works](https://plumbline-web.plumbline-app.workers.dev/how-it-works) ·
+[try it](https://plumbline-web.plumbline-app.workers.dev/try) · [faucet](https://plumbline-web.plumbline-app.workers.dev/faucet) ·
+[status](https://plumbline-web.plumbline-app.workers.dev/status)
 
 > **What this is, plainly.** A testnet demo on Elysium (chain 99801). Nothing here has monetary value.
 > * **Live (read from the chain by your browser):** campaigns, vaults and their quotes, and every probe,
@@ -11,7 +11,7 @@ browser reads the chain itself; wallet actions send real testnet transactions ·
 >   per-hour quote-update rates and fills from before the snapshot. They need receipts or a price feed
 >   that a browser does not read.
 > * **PLUMBUSD is a demo asset**: a mintable token with no value, used because testnet USDC cannot be
->   had. The [faucet](https://plumbline-elysium.vercel.app/faucet) hands it out.
+>   had. The [faucet](https://plumbline-web.plumbline-app.workers.dev/faucet) hands it out.
 > * **No outside market maker has run on Plumbline yet.** Every quote, bond and probe so far came from the
 >   project's own wallets and bots. Another wallet has opened a campaign and created a vault on the legacy
 >   contract, but no outside maker has quoted, been probed or earned anything.
@@ -136,7 +136,7 @@ PLUMBUSD market labels it **demo asset**; it is never rendered as USDC.
 
 ## Business model and mainnet plan
 
-The same text is on the site: [How it works](https://plumbline-elysium.vercel.app/how-it-works).
+The same text is on the site: [How it works](https://plumbline-web.plumbline-app.workers.dev/how-it-works).
 
 Plain words, and only what is true today. The plan below describes things that **do not exist yet**; none of it is in the
 contracts.
@@ -401,8 +401,8 @@ pnpm --filter @plumbline/web build:static           # vite build --mode static +
   `/verify` compares figures against the chain and is exposed to the same trust. Build with
   `VITE_RPC_URL` set to put your own node first.
 * A static host cannot inject per-request meta tags, so the build writes `report/<TOKEN>.html` with
-  that report's Open Graph tags; [`vercel.json`](vercel.json) serves it at `/report/<TOKEN>` and falls
-  back to the SPA for every other route. Preview images use `PUBLIC_URL` or Vercel's production domain.
+  that report's Open Graph tags; the Cloudflare static-assets Worker ([`apps/web/wrangler.jsonc`](apps/web/wrangler.jsonc)) serves it at `/report/<TOKEN>` and falls
+  back to the SPA for every other route. Preview images use `PUBLIC_URL`, which `pnpm deploy:web` sets from `SITE_URL`.
 
 To refresh the snapshot after new on-chain activity: rerun `pnpm export:static`, commit, push. Until
 then the browser fills the gap itself.
